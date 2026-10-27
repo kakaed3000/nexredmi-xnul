@@ -1,0 +1,43 @@
+--- a/bsd/dev/angelica_msdc.c
++++ b/bsd/dev/angelica_msdc.c
+@@ -30,6 +30,10 @@
+ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+ extern addr64_t kvtophys(vm_offset_t va);
+ extern void flush_dcache(vm_offset_t addr, unsigned count, int phys);
++extern void angelica_sample_start(void);
++extern void angelica_keys_init(void);
++extern void angelica_touch_init(void);
++extern void angelica_usb_probe(void);
+ 
+ /* MediaTek MSDC register map (drivers/mmc/host/mediatek/ComboA/msdc_reg.h). */
+ #define MSDC_CFG        0x00
+@@ -702,6 +706,11 @@
+ 	sm.ready = true;
+ 	kprintf("ANGELICA MSDC: \"%s\": first block 0x%llx, %llu MiB, read-only\n",
+ 	    want, sm.first_block, sm.nblocks * MSDC_BLOCK >> 20);
++	kprintf("ANGELICA MSDC: starting post-root hooks\n");
++	angelica_sample_start();
++	angelica_keys_init();
++	angelica_touch_init();
++	angelica_usb_probe();
+ 	return 0;
+ }
+ 
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -6880,7 +6880,14 @@
+ 	 */
+ 	set_security_token(p);
+ 
+-	return execve(p, &init_exec_args, retval);
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	printf("ANGELICA init: exec %s pid %d\n", path, proc_getpid(p));
++#endif
++	error = execve(p, &init_exec_args, retval);
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	printf("ANGELICA init: exec %s returned %d\n", path, error);
++#endif
++	return error;
+ }
+ 
+ static const char * init_programs[] = {
