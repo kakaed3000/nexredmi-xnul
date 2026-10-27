@@ -1,0 +1,114 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -1157,6 +1157,36 @@
+  *		activators should not be given the opportunity to attempt
+  *		to activate the image.
+  */
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++static void
++angelica_log_exec(proc_t p, struct image_params *imgp, int spawn, int exec)
++{
++	struct _posix_spawnattr *psa = (struct _posix_spawnattr *)imgp->ip_px_sa;
++	pid_t ppid = p->p_pptr != NULL ? proc_getpid(p->p_pptr) : 0;
++
++	printf("ANGELICA exec: pid %d ppid %d name %s uid %u spawn %d exec %d psa 0x%x path %.*s argv [",
++	    proc_getpid(p), ppid, p->p_name, proc_getuid(p), spawn, exec,
++	    psa != NULL ? (unsigned int)psa->psa_flags : 0,
++	    (int)imgp->ip_ndp->ni_cnd.cn_namelen, imgp->ip_ndp->ni_cnd.cn_nameptr);
++	if (imgp->ip_startargv != NULL && imgp->ip_endargv > imgp->ip_startargv) {
++		char *arg = imgp->ip_startargv;
++		for (int i = 0; i < imgp->ip_argc && i < 12; i++) {
++			if (arg >= imgp->ip_endargv) {
++				break;
++			}
++			size_t max = (size_t)(imgp->ip_endargv - arg);
++			size_t len = strnlen(arg, max);
++			if (len == max) {
++				break;
++			}
++			printf("%s%.*s", i != 0 ? " " : "", (int)len, arg);
++			arg += len + 1;
++		}
++	}
++	printf("]\n");
++}
++#endif
++
+ static int
+ exec_mach_imgact(struct image_params *imgp)
+ {
+@@ -1924,9 +1954,7 @@
+ 	set_proc_name(imgp, p);
+ 
+ #if defined(ARM64_BOARD_CONFIG_ANGELICA)
+-	printf("ANGELICA exec ok: pid %d name %s spawn %d path %.*s\n",
+-	    proc_getpid(p), p->p_name, spawn,
+-	    (int)imgp->ip_ndp->ni_cnd.cn_namelen, imgp->ip_ndp->ni_cnd.cn_nameptr);
++	angelica_log_exec(p, imgp, spawn, exec);
+ #endif
+ 
+ #if CONFIG_SECLUDED_MEMORY
+@@ -4662,6 +4690,14 @@
+ 		new_task = NULL;
+ 	}
+ 
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	if (error != 0) {
++		pid_t ppid = p->p_pptr != NULL ? proc_getpid(p->p_pptr) : 0;
++		printf("ANGELICA spawn fail: pid %d ppid %d name %s error %d\n",
++		    proc_getpid(p), ppid, p->p_name, error);
++	}
++#endif
++
+ 	if (should_release_proc_ref) {
+ 		proc_rele(p);
+ 	}
+@@ -5178,8 +5214,11 @@
+ 
+ #if defined(ARM64_BOARD_CONFIG_ANGELICA)
+ 	if (error != 0 && p != NULL) {
+-		printf("ANGELICA exec fail: pid %d name %s error %d\n",
+-		    proc_getpid(p), p->p_name, error);
++		pid_t ppid = p->p_pptr != NULL ? proc_getpid(p->p_pptr) : 0;
++		printf("ANGELICA exec fail: pid %d ppid %d name %s error %d path %.*s\n",
++		    proc_getpid(p), ppid, p->p_name, error,
++		    imgp != NULL && imgp->ip_ndp != NULL ? (int)imgp->ip_ndp->ni_cnd.cn_namelen : 1,
++		    imgp != NULL && imgp->ip_ndp != NULL ? imgp->ip_ndp->ni_cnd.cn_nameptr : "?");
+ 	}
+ #endif
+ 
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -1846,8 +1846,17 @@
+ 	int create_corpse = FALSE;
+ 
+ #if defined(ARM64_BOARD_CONFIG_ANGELICA)
+-	printf("ANGELICA exit: pid %d name %s status 0x%x sig %d code %d\n",
+-	    proc_getpid(p), p->p_name, rv, WTERMSIG(rv), WEXITSTATUS(rv));
++	{
++		pid_t ppid = p->p_pptr != NULL ? proc_getpid(p->p_pptr) : 0;
++		char *desc = exit_reason_get_string_desc(p->p_exit_reason);
++
++		printf("ANGELICA exit: pid %d ppid %d name %s uid %u status 0x%x sig %d code %d exit %d ns %u sub 0x%llx desc %s cs 0x%x spawnfail %d\n",
++		    proc_getpid(p), ppid, p->p_name, proc_getuid(p), rv,
++		    WTERMSIG(rv), WEXITSTATUS(rv), WIFEXITED(rv) ? WEXITSTATUS(rv) : -1,
++		    p->p_exit_reason != OS_REASON_NULL ? p->p_exit_reason->osr_namespace : 0,
++		    p->p_exit_reason != OS_REASON_NULL ? p->p_exit_reason->osr_code : 0,
++		    desc != NULL ? desc : "-", proc_getcsflags(p), p->p_posix_spawn_failed);
++	}
+ #endif
+ 
+ 	if (p->p_crash_behavior != 0 || p == initproc) {
+--- a/bsd/dev/mem.c
++++ b/bsd/dev/mem.c
+@@ -179,7 +179,9 @@
+ 	for (const char *t = angelica_null_names; *t;) {
+ 		const char *end = strchr(t, ',');
+ 		size_t tl = end ? (size_t)(end - t) : strlen(t);
+-		if (tl == n && n > 0 && strncmp(t, name, n) == 0) {
++		if ((tl == 3 && strncmp(t, "all", 3) == 0) ||
++		    (tl == 1 && *t == '*') ||
++		    (tl == n && n > 0 && strncmp(t, name, n) == 0)) {
+ 			return true;
+ 		}
+ 		if (!end) {
