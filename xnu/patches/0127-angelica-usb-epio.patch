@@ -1,0 +1,11 @@
+--- a/bsd/dev/angelica_usb.c
++++ b/bsd/dev/angelica_usb.c
+@@ -318,7 +318,7 @@
+ static inline uint32_t
+ ud_epio(uint32_t off)
+ {
+-	return ud.musb + 0x10 + off;
++	return 0x10 + off;
+ }
+ 
+ static inline uint32_t
