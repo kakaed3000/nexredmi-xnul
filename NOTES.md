@@ -121,8 +121,15 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
 - `0138-angelica-cpu4-start-prereqs.patch` logs the physical entry and its
   first instruction, wakes CPU4's GIC redistributor (`GICR_WAKER`), reads
   TOP_RGU, enables `MP1_RGU_DCM` (`0x10200288`), and clears
-  ISO/CLK_DIS/SRAM_PDN in `MP1_CPU0_PWR_CON` with readback. Build/flash
-  pending.
+  ISO/CLK_DIS/SRAM_PDN in `MP1_CPU0_PWR_CON` with readback. Flashed panic:
+  entry `0x6142f000`, first word `d280001c` (correct), GICR WAKER
+  `0->0` (awake), TOP_RGU `0/0/0`, DCM already on. CPU4 PWR_CON write
+  sticks (`110001b3->11001041`, later `d0001045`), but MP1_CPUTOP stays
+  `d18011a7` with SRAM_PDN/CKISO/CLAMP set, while CPU0 CPUTOP is
+  `d0001845` with those bits clear.
+- `0139-angelica-mp1top-sram.patch` clears MP1_CPUTOP
+  ISO/CKISO/CLAMP/SRAM_PDN and sets SRAM_ISOINT_B before CPU_ON, with
+  readback. Build/flash pending.
 - `boot4=0x47d818d8` is ATF's `bl31_warm_entrypoint`, not XNU's
   `angelica_secondary_entry` (PA `0x6142f000`). The non-secure entry is kept
   in ATF's per-CPU `warmboot_ep_info`; comparing boot4 with the trampoline is

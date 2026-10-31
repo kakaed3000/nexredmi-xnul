@@ -1,0 +1,60 @@
+--- a/iokit/Kernel/arm/AngelicaCPU.cpp
++++ b/iokit/Kernel/arm/AngelicaCPU.cpp
+@@ -42,6 +42,9 @@
+ static uint32_t angelica_entry_word;
+ static uint32_t angelica_gicr_waker_before;
+ static uint32_t angelica_gicr_waker_after;
++static uint64_t angelica_gicr_typer;
++static uint32_t angelica_mp1top_before;
++static uint32_t angelica_mp1top_after;
+ static uint32_t angelica_rgu_mode;
+ static uint32_t angelica_rgu_status;
+ static uint32_t angelica_rgu_swsysrst;
+@@ -181,6 +184,7 @@
+ 		return;
+ 	}
+ 
++	angelica_gicr_typer = *(volatile uint64_t *)(pe + 0x08);
+ 	angelica_gicr_waker_before = *(volatile uint32_t *)(pe + 0x14);
+ 	if (angelica_gicr_waker_before & 0x4U) {
+ 		*(volatile uint32_t *)(pe + 0x14) =
+@@ -214,6 +218,19 @@
+ 	angelica_rgu_status = angelica_reg_read(0x1000700c);
+ 	angelica_rgu_swsysrst = angelica_reg_read(0x10007018);
+ 
++	/*
++	 * CPU0's CPUTOP keeps SRAM_PDN/CKISO/CLAMP clear, but after the
++	 * cluster power cycle MP1_CPUTOP is left at d18011a7 (SRAM_PDN set).
++	 * ATF's cluster-on path only raises PWR_ON; clear the MP1 SRAM
++	 * power-down bits and re-assert SRAM_ISOINT_B before CPU_ON.
++	 */
++	angelica_mp1top_before = angelica_reg_read(0x10006218);
++	uint32_t top = angelica_mp1top_before & ~0x1b2U;
++	top |= 0x1040U;
++	angelica_reg_write(0x10006218, top);
++	__builtin_arm_dsb(DSB_SY);
++	angelica_mp1top_after = angelica_reg_read(0x10006218);
++
+ 	angelica_mp1c0_before = angelica_reg_read(0x1000621c);
+ 	uint32_t cpu = angelica_mp1c0_before & ~0x1b2U;
+ 	cpu |= 0x1040U;
+@@ -400,8 +417,8 @@
+ 				    "ANGELICA REG pwr=%08x/%08x mp0top=%08x mp0c0=%08x mp1top=%08x mp1c0=%08x\n"
+ 				    "ANGELICA REG boot0=%08x boot4=%08x spark1=%08x bypass=%08x\n"
+ 				    "ANGELICA REG cyc pwr=%08x->%08x top=%08x->%08x prot=%08x->%08x\n"
+-				    "ANGELICA REG entry=%08x word=%08x gicr=%08x->%08x\n"
+-				    "ANGELICA REG rgu=%08x/%08x/%08x dcm=%08x->%08x cpu=%08x->%08x",
++				    "ANGELICA REG entry=%08x word=%08x gicr=%08x->%08x typer=%llx\n"
++				    "ANGELICA REG top1=%08x->%08x rgu=%08x/%08x/%08x dcm=%08x->%08x cpu=%08x->%08x",
+ 				    i, __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
+ 				    angelica_cpu_signal_is_enabled(i), trace,
+ 				    angelica_trace_pa[i], angelica_affinity_before[i],
+@@ -416,6 +433,8 @@
+ 				    angelica_prot_before, angelica_prot_after,
+ 				    angelica_entry_pa, angelica_entry_word,
+ 				    angelica_gicr_waker_before, angelica_gicr_waker_after,
++				    angelica_gicr_typer,
++				    angelica_mp1top_before, angelica_mp1top_after,
+ 				    angelica_rgu_mode, angelica_rgu_status,
+ 				    angelica_rgu_swsysrst,
+ 				    angelica_rgu_dcm_before, angelica_rgu_dcm_after,
