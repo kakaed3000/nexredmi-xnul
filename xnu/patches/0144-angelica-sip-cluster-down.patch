@@ -1,0 +1,122 @@
+--- a/iokit/Kernel/arm/AngelicaCPU.cpp
++++ b/iokit/Kernel/arm/AngelicaCPU.cpp
+@@ -70,6 +70,7 @@
+ static uint32_t angelica_cpusys1_vret_after;
+ static uint32_t angelica_cpusys1_amux_before;
+ static uint32_t angelica_cpusys1_amux_after;
++static int32_t angelica_sip_power_down_rc;
+ static vm_offset_t angelica_gicr_base;
+ 
+ /*
+@@ -257,41 +258,24 @@
+ 	angelica_mp1c0_after = angelica_reg_read(0x1000621c);
+ 
+ 	/*
+-	 * ATF's SPMC tables leave MP1_CPUTOP_SPMC_CTL in the cluster-off
+-	 * state (ISO/CLK_DIS/CKISO/HOT_PLUG_RESET), unlike MP0. Use MP0's
+-	 * control bits as the on template and leave the ACK bits alone.
++	 * 0143 showed that non-secure writes to MP1_CPUTOP_SPMC_CTL and
++	 * CPUSYS1_CPU0_SPMC_CTL are acknowledged but do not stick. Leave both
++	 * to ATF and only snapshot them so the timeout log shows whether the
++	 * secure CPU_ON path programmed CPUSYS1_CPU0_SPMC_CTL.
+ 	 */
+ 	angelica_mp0_spmc = angelica_reg_read(0x10200788);
+ 	angelica_mp1_spmc_before = angelica_reg_read(0x1020078c);
+-	uint32_t spmc = angelica_mp1_spmc_before;
+-	spmc &= ~((1U << 6) | (1U << 14) | (1U << 15) | (1U << 22));
+-	spmc |= (angelica_mp0_spmc & ((1U << 0) | (1U << 1) | (1U << 3) |
+-	    (1U << 4) | (1U << 5) | (1U << 13)));
+-	angelica_reg_write(0x1020078c, spmc);
+-	__builtin_arm_dsb(DSB_SY);
+-	angelica_mp1_spmc_after = angelica_reg_read(0x1020078c);
++	angelica_mp1_spmc_after = angelica_mp1_spmc_before;
+ 
+-	/*
+-	 * CPUSYS1 SPMC is also left at zero. CPU1 on cluster0 is a known-good
+-	 * secondary-core template; clear isolation/clock/power-down and enable
+-	 * SPARK before CPU_ON so CPU4 has a running clock.
+-	 */
+ 	angelica_cpusys1_vret_before = angelica_reg_read(0x10203c00);
+ 	angelica_cpusys1_sparken_before = angelica_reg_read(0x10203c04);
+ 	angelica_cpusys1_amux_before = angelica_reg_read(0x10203c08);
+ 	angelica_cpusys0_cpu1_spmc = angelica_reg_read(0x10201c34);
+ 	angelica_cpusys1_ctl_before = angelica_reg_read(0x10203c30);
+-
+-	uint32_t ctl = angelica_cpusys0_cpu1_spmc & 0x0007ffffU;
+-	ctl &= ~((1U << 6) | (1U << 9) | (1U << 10) | (0x1fU << 11) |
+-	    (1U << 16));
+-	ctl |= (1U << 0) | (1U << 1) | (1U << 7) | (1U << 8);
+-	angelica_reg_write(0x10203c30, ctl);
+-	__builtin_arm_dsb(DSB_SY);
+-	angelica_cpusys1_ctl_after = angelica_reg_read(0x10203c30);
+-	angelica_cpusys1_sparken_after = angelica_reg_read(0x10203c04);
+-	angelica_cpusys1_vret_after = angelica_reg_read(0x10203c00);
+-	angelica_cpusys1_amux_after = angelica_reg_read(0x10203c08);
++	angelica_cpusys1_ctl_after = angelica_cpusys1_ctl_before;
++	angelica_cpusys1_sparken_after = angelica_cpusys1_sparken_before;
++	angelica_cpusys1_vret_after = angelica_cpusys1_vret_before;
++	angelica_cpusys1_amux_after = angelica_cpusys1_amux_before;
+ 
+ 	/*
+ 	 * The cluster L2 SRAM has separate power controls at 0x10006258/25c.
+@@ -328,12 +312,29 @@
+ 	    angelica_reg_read(0x10201c30), angelica_reg_read(0x10203c30),
+ 	    angelica_reg_read(0x10201638), angelica_reg_read(0x10203638),
+ 	    angelica_reg_read(0x10226000));
++	IOLog("ANGELICA REG %s cpu=%u prot=%08x arch0=%08x arch1=%08x\n",
++	    when, id, angelica_reg_read(0x10001258),
++	    angelica_reg_read(0x1020003c), angelica_reg_read(0x1020023c));
+ 	IOLog("ANGELICA REG %s cpu=%u mp0spmc=%08x mp1spmc=%08x c1ctl=%08x c1en=%08x c1vret=%08x c1amux=%08x\n",
+ 	    when, id, angelica_reg_read(0x10200788), angelica_reg_read(0x1020078c),
+ 	    angelica_reg_read(0x10203c30), angelica_reg_read(0x10203c04),
+ 	    angelica_reg_read(0x10203c00), angelica_reg_read(0x10203c08));
+ }
+ 
++/* Vendor SIP 0xC2000210: power down a cluster through ATF's SPMC path. */
++static int32_t
++angelica_sip_power_down_cluster(uint64_t cluster)
++{
++	register uint64_t x0 __asm__("x0") = 0xC2000210ULL;
++	register uint64_t x1 __asm__("x1") = cluster;
++	register uint64_t x2 __asm__("x2") = 0;
++	register uint64_t x3 __asm__("x3") = 0;
++	__asm__ volatile("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : :
++	    "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",
++	    "x14", "x15", "x16", "x17", "cc", "memory");
++	return (int32_t)x0;
++}
++
+ /* SMCCC 1.0: x0 is the signed PSCI result; do not assume x1-x17 survive. */
+ static int32_t
+ angelica_psci_affinity_info(uint64_t target, uint64_t lowest)
+@@ -490,6 +491,13 @@
+ 				    __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
+ 				    angelica_cpu_signal_is_enabled(i), trace);
+ 				angelica_log_smp_regs(i, "timeout");
++				IOLog("ANGELICA REG timeout-live cpu=%u prot=%08x sipdown=%d c1ctl=%08x c1en=%08x c1vret=%08x c1amux=%08x\n",
++				    i, angelica_reg_read(0x10001258),
++				    angelica_sip_power_down_rc,
++				    angelica_reg_read(0x10203c30),
++				    angelica_reg_read(0x10203c04),
++				    angelica_reg_read(0x10203c00),
++				    angelica_reg_read(0x10203c08));
+ 				int32_t affinity_now = angelica_psci_affinity_info(
+ 				    topology->cpus[i].phys_id, 0);
+ 				panic("ANGELICA CPU: cpu=%u startup timeout init=%u sgi=%u trace=0x%llx trace_pa=0x%llx affinity=%d->%d now=%d\n"
+@@ -628,8 +636,14 @@
+ 	    id, cpu->phys_id, (uint64_t)entry, angelica_entry_word, angelica_trace_pa[id]);
+ 	if (((cpu->phys_id >> 8) & 0xff) != 0) {
+ 		angelica_wake_gicr(cpu->phys_id);
+-		angelica_cluster1_power_cycle();
+-		angelica_prepare_cluster1_cpu();
++		if (((cpu->phys_id >> 0) & 0xff) == 0) {
++			angelica_cluster1_power_cycle();
++			angelica_sip_power_down_rc =
++			    angelica_sip_power_down_cluster(1);
++			IOLog("ANGELICA CPU: cpu=%u SIP POWER_DOWN_CLUSTER(1) rc=%d\n",
++			    id, angelica_sip_power_down_rc);
++			angelica_prepare_cluster1_cpu();
++		}
+ 	}
+ 	__builtin_arm_dsb(DSB_SY);
+ 	angelica_log_smp_regs(id, "pre");
