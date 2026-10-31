@@ -1,0 +1,23 @@
+--- a/iokit/Kernel/arm/AngelicaCPU.cpp
++++ b/iokit/Kernel/arm/AngelicaCPU.cpp
+@@ -246,11 +246,18 @@
+ 				    __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
+ 				    angelica_cpu_signal_is_enabled(i), trace);
+ 				angelica_log_smp_regs(i, "timeout");
+-				panic("ANGELICA CPU: cpu=%u startup timeout init=%u sgi=%u trace=0x%llx trace_pa=0x%llx affinity=%d->%d",
++				panic("ANGELICA CPU: cpu=%u startup timeout init=%u sgi=%u trace=0x%llx trace_pa=0x%llx affinity=%d->%d\n"
++				    "ANGELICA REG pwr=%08x/%08x mp0top=%08x mp0c0=%08x mp1top=%08x mp1c0=%08x\n"
++				    "ANGELICA REG boot0=%08x boot4=%08x spark1=%08x bypass=%08x",
+ 				    i, __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
+ 				    angelica_cpu_signal_is_enabled(i), trace,
+ 				    angelica_trace_pa[i], angelica_affinity_before[i],
+-				    angelica_affinity_after[i]);
++				    angelica_affinity_after[i],
++				    angelica_reg_read(0x10006180), angelica_reg_read(0x10006184),
++				    angelica_reg_read(0x10006204), angelica_reg_read(0x10006208),
++				    angelica_reg_read(0x10006218), angelica_reg_read(0x1000621c),
++				    angelica_reg_read(0x10200038), angelica_reg_read(0x10200238),
++				    angelica_reg_read(0x10203c30), angelica_reg_read(0x100062b4));
+ 			}
+ 			IOSleep(1);
+ 		}

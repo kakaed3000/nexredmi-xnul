@@ -88,10 +88,14 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
   `94f88ec5...417868`; boot image
   `xnul/out/xnul-boot-0134-8cpu-a53-rw.img` 16,683,008 B, sha256
   `62da4c7a...1ae6e0`.
-- Flashed `xnul-boot-0134-8cpu-a53-rw.img` with `fastboot flash boot` and
-  rebooted. USB did not enumerate within 2 minutes and no ADB/fastboot device
-  appeared; waiting for the screen photo or recovery log pull to read the
-  `ANGELICA REG pre/post/timeout` lines.
+- Flashed `xnul-boot-0134-8cpu-a53-rw.img` and rebooted. Panic confirmed at
+  `AngelicaCPU.cpp:253`, `trace_pa=0x6205a6b8`, `affinity=1->2`; CPU4 still
+  does not execute. The screen showed only `cpu_signal failed in
+  DebuggerXCallEnter` above the panic, no `ANGELICA REG` IOLog lines (panic
+  output apparently replaces/omits them).
+- `0135-angelica-smp-regs-panic.patch` embeds `pwr`, `mp0top`, `mp0c0`,
+  `mp1top`, `mp1c0`, `boot0`, `boot4`, `spark1` and `bypass` directly in the
+  panic string. Applies after 0134; build/flash pending.
 - If boot4 is valid, ATF ran and the failure is CPU4 entry/power; if boot4 is
   0/3, ATF's bootaddr write did not happen and cluster1 power-on is the target.
 
