@@ -1,0 +1,13 @@
+--- a/iokit/Kernel/arm/AngelicaCPU.cpp
++++ b/iokit/Kernel/arm/AngelicaCPU.cpp
+@@ -73,8 +73,8 @@
+ 	if (*(const uint32_t *)reg->getBytesNoCopy() != cpu->phys_id) {
+ 		return false;
+ 	}
+-	/* MPIDR Aff0 = core: 0x000-0x007 (8x Cortex-A53, one cluster) */
+-	if (cpu->phys_id > 0x700 || (cpu->phys_id & 0xff) != 0 ||
++	/* Angelica's ADT uses reg = MPIDR Aff0 (0..7), one A53 cluster. */
++	if (cpu->phys_id >= ANGELICA_SMP_MAX_CPUS ||
+ 	    topology->num_cpus > ANGELICA_SMP_MAX_CPUS) {
+ 		panic("ANGELICA CPU: invalid topology cpu=%u mpidr=0x%x count=%u",
+ 		    cpu->cpu_id, cpu->phys_id, topology->num_cpus);
