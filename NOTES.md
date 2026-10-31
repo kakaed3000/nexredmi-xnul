@@ -181,14 +181,24 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
   and HOT_PLUG_RESET(22), while MP0 `0x3a00203b` has those clear and
   SRAM_ISOINT_B(13) set. ATF's `spmc_init` only programs SPM `PWR_CON`; it
   never touches `MP1_CPUTOP_SPMC_CTL`, `CPUSYS1` or L2.
-- `0143-angelica-mp1-spmc.patch` (prepared) uses MP0 as the on template for
-  `MP1_CPUTOP_SPMC_CTL` (clear 6/14/15/22, copy 0/1/3/4/5/13), then programs
-  `CPUSYS1_CPU0_SPMC_CTL` for CPU4 from the working CPU1 template: clear
-  ISO(6), CLK_DIS(9), CKISO(10), PD(11-15), HOT_PLUG_RESET(16); set
-  SPARK_EN(0), NO_WAIT(1), SRAM_SLEEPB(7), SRAM_ISOINTB(8). New panic/log
-  fields cover MP0/MP1 SPMC, CPUSYS1 CTL/SPARKEN/VRET/AMUX and MP1 SRAM ctl.
-- Next: commit/push 0143, run CI, rebuild payload/image, flash, and check
-  whether the SPMC writes stick and CPU4 finally writes the NS trace.
+- `0143-angelica-mp1-spmc.patch` (commit `ece45ef`) uses MP0 as the on
+  template for `MP1_CPUTOP_SPMC_CTL` (clear 6/14/15/22, copy 0/1/3/4/5/13),
+  then programs `CPUSYS1_CPU0_SPMC_CTL` for CPU4 from the working CPU1
+  template: clear ISO(6), CLK_DIS(9), CKISO(10), PD(11-15),
+  HOT_PLUG_RESET(16); set SPARK_EN(0), NO_WAIT(1), SRAM_SLEEPB(7),
+  SRAM_ISOINTB(8). New panic/log fields cover MP0/MP1 SPMC, CPUSYS1
+  CTL/SPARKEN/VRET/AMUX and MP1 SRAM ctl.
+- CI `41214880239` passed on `e13124b`; kernel
+  `xnu/out-0143/kernel.development.angelica` 17,149,280 B sha256
+  `abe973a1...89e35f`. Payload `xnul/out/payload-0143-a53-rw.bin`
+  16,537,680 B sha256 `3e4ee6a7...bc2e9ea`; boot image
+  `xnul/out/xnul-boot-0143-8cpu-a53-rw.img` 16,648,192 B sha256
+  `34a19384...fdfac1c`; unpacked ramdisk byte-matches (`check-0143`).
+  Awaiting user FASTBOOT to flash 0143 and collect the timeout panic.
+- Next: flash 0143; check `mp1spmc`/`c1ctl` before->after, whether writes
+  stick, and whether CPU4 finally writes the NS trace. If writes stick but
+  CPU4 still does not run, next target `CPUSYS1_SPARKEN`/`SPARKVRETCNTRL`/
+  `AMUXSEL` and `MP1_CPUTOP_SPMC_SRAM_CTL`.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
