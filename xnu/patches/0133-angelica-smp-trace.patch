@@ -1,0 +1,134 @@
+--- a/iokit/Kernel/arm/AngelicaCPU.cpp
++++ b/iokit/Kernel/arm/AngelicaCPU.cpp
+@@ -20,10 +20,14 @@
+ 
+ extern "C" void angelica_secondary_entry(void);
+ extern "C" boolean_t angelica_cpu_signal_is_enabled(unsigned int cpu);
++extern "C" uint64_t ml_phys_read_data(uint64_t paddr, int size);
++extern "C" void ml_phys_write_data(uint64_t paddr, uint64_t data, int size);
+ 
+ class AngelicaCPU;
+ static AngelicaCPU *angelica_cpus[MAX_CPUS];
+ static uint32_t angelica_cpus_registered;
++static volatile uint64_t angelica_trace[ANGELICA_SMP_MAX_CPUS];
++static uint64_t angelica_trace_pa[ANGELICA_SMP_MAX_CPUS];
+ 
+ /* SMCCC 1.0: x0 is the signed PSCI result; do not assume x1-x17 survive. */
+ static int32_t
+@@ -157,12 +161,16 @@
+ 			panic("ANGELICA CPU: cpu=%u processor_start failed: %d", i, kr);
+ 		}
+ 		/* processor_start() is asynchronous for secondaries in this XNU. */
+-		nanoseconds_to_deadline(5 * NSEC_PER_SEC, &deadline);
++		nanoseconds_to_deadline(20 * NSEC_PER_SEC, &deadline);
+ 		while (__atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE) == 0 ||
+ 		    !angelica_cpu_signal_is_enabled(i)) {
+ 			if (mach_absolute_time() > deadline) {
+-				IOLog("ANGELICA CPU: cpu=%u mpidr=0x%x NOT alive after 5s\n",
+-				    i, topology->cpus[i].phys_id);
++				uint64_t trace = angelica_trace_pa[i] ?
++				    ml_phys_read_data(angelica_trace_pa[i], 8) : 0;
++				IOLog("ANGELICA CPU: cpu=%u mpidr=0x%x NOT alive after 20s init=%u sgi=%u trace=0x%llx\n",
++				    i, topology->cpus[i].phys_id,
++				    __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
++				    angelica_cpu_signal_is_enabled(i), trace);
+ 				panic("ANGELICA CPU: cpu=%u startup timeout (reset/MMU/GIC/SGI)", i);
+ 			}
+ 			IOSleep(1);
+@@ -240,11 +248,14 @@
+ 	    __atomic_load_n(&initialized, __ATOMIC_ACQUIRE) != 0) {
+ 		panic("ANGELICA CPU: cpu=%u unsupported restart", getCPUNumber());
+ 	}
++	unsigned int id = getCPUNumber();
+ 	vm_offset_t entry = ml_static_vtop((vm_offset_t)&angelica_secondary_entry);
+-	IOLog("ANGELICA CPU: cpu=%u CPU_ON target=0x%x entry_pa=0x%llx context=%u\n",
+-	    getCPUNumber(), cpu->phys_id, (uint64_t)entry, getCPUNumber());
++	angelica_trace_pa[id] = ml_static_vtop((vm_offset_t)&angelica_trace[id]);
++	ml_phys_write_data(angelica_trace_pa[id], 0xaa00 | id, 8);
++	IOLog("ANGELICA CPU: cpu=%u CPU_ON target=0x%x entry_pa=0x%llx context=0x%llx\n",
++	    id, cpu->phys_id, (uint64_t)entry, angelica_trace_pa[id]);
+ 	__builtin_arm_dsb(DSB_SY);
+-	int32_t rc = angelica_psci_cpu_on(cpu->phys_id, entry, getCPUNumber());
++	int32_t rc = angelica_psci_cpu_on(cpu->phys_id, entry, angelica_trace_pa[id]);
+ 	IOLog("ANGELICA CPU: cpu=%u PSCI CPU_ON rc=%d\n", getCPUNumber(), rc);
+ 	/* cpu_start() discards PE_cpu_start's return; do not silently carry on. */
+ 	if (rc != 0) {
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -162,6 +162,12 @@
+ 	b.eq	Lskip_cpu_reset_handler				// Not found
+ 	b		Lcheck_cpu_data_entry	// loop
+ Lfound_cpu_data_entry:
++#if defined(ANGELICA)
++	cbz		x28, 1f
++	mov		x9, #6
++	str		x9, [x28]
++1:
++#endif
+ 	adrp	x20, EXT(const_boot_args)@page
+ 	add		x20, x20, EXT(const_boot_args)@pageoff
+ 	ldr		x0, [x21, CPU_RESET_HANDLER]		// Call CPU reset handler
+@@ -191,8 +197,20 @@
+ 	msr		TPIDR_EL1, x13
+ #endif /* __ARM_KERNEL_PROTECT__ */
+ 
++#if defined(ANGELICA)
++	cbz		x28, 1f
++	mov		x9, #7
++	str		x9, [x28]
++1:
++#endif
+ 	blr		x0
+ Lskip_cpu_reset_handler:
++#if defined(ANGELICA)
++	cbz		x28, 1f
++	mov		x9, #0xdead
++	str		x9, [x28]
++1:
++#endif
+ 	b		.									// Hang if the handler is NULL or returns
+ 
+ 	.align 3
+@@ -288,8 +306,19 @@
+ 	.align 2
+ 	.globl EXT(angelica_secondary_entry)
+ LEXT(angelica_secondary_entry)
++	/* x0 is the trace-slot physical address (PSCI context). */
++	mov		x28, #0
++	cbz		x0, 1f
++	mov		x9, #1
++	str		x9, [x0]
++	mov		x28, x0
++1:
+ 	msr		DAIFSet, #0xf
+ 	mrs		x1, CurrentEL
++	cbz		x28, 2f
++	mov		x9, #2
++	str		x9, [x28]
++2:
+ 	cmp		x1, #0x4
+ 	b.eq	Langelica_secondary_el1
+ 	cmp		x1, #0x8
+@@ -322,10 +351,22 @@
+ 	msr		SPSR_EL2, x1
+ 	eret
+ Langelica_secondary_bad_el:
++	cbz		x28, 1f
++	mov		x9, #0xbad
++	str		x9, [x28]
++1:
+ 	b		.
+ Langelica_secondary_el1:
+ 	/* x0 is deliberately unused; reset_vector selects CPU data by MPIDR. */
++	cbz		x28, 1f
++	mov		x9, #3
++	str		x9, [x28]
++1:
+ 	msr		SPSel, #1
++	cbz		x28, 2f
++	mov		x9, #4
++	str		x9, [x28]
++2:
+ 	b		EXT(LowResetVectorBase)
+ #endif /* ANGELICA */
+ 
