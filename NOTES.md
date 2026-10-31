@@ -172,8 +172,23 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
   `xnul/out/payload-0141-a53-rw.bin` 16,537,680 B sha256 `86cc4ae8...f5091`;
   boot image `xnul/out/xnul-boot-0141-8cpu-a53-rw.img` 16,648,192 B sha256
   `28f9fabb...8f457`; unpacked ramdisk byte-matches the payload
-  (`xnul/out/check-0141`). Awaiting user FASTBOOT to flash and collect the
-  timeout panic.
+  (`xnul/out/check-0141`). Flashed and booted; CPU4 still times out.
+- 0141 flashed panic: `pwr=0001df4c/0001df4c`, `mp1top=d1801845`,
+  `mp1c0=d0001045`, `spark0=0070f9ba`, `spark1=0`, `l2sleep=101->101`,
+  `l2pdn=0->80000000`, `ptpod2=0->0`, `spmc=3a00203b/3a40c043/002f1788`,
+  `arch=f000/1000`, `now=2`. The L2/PTPOD2 writes had no useful effect.
+  `MP1_CPUTOP_SPMC_CTL=0x3a40c043` still has ISO(6), CLK_DIS(14), CKISO(15)
+  and HOT_PLUG_RESET(22), while MP0 `0x3a00203b` has those clear and
+  SRAM_ISOINT_B(13) set. ATF's `spmc_init` only programs SPM `PWR_CON`; it
+  never touches `MP1_CPUTOP_SPMC_CTL`, `CPUSYS1` or L2.
+- `0143-angelica-mp1-spmc.patch` (prepared) uses MP0 as the on template for
+  `MP1_CPUTOP_SPMC_CTL` (clear 6/14/15/22, copy 0/1/3/4/5/13), then programs
+  `CPUSYS1_CPU0_SPMC_CTL` for CPU4 from the working CPU1 template: clear
+  ISO(6), CLK_DIS(9), CKISO(10), PD(11-15), HOT_PLUG_RESET(16); set
+  SPARK_EN(0), NO_WAIT(1), SRAM_SLEEPB(7), SRAM_ISOINTB(8). New panic/log
+  fields cover MP0/MP1 SPMC, CPUSYS1 CTL/SPARKEN/VRET/AMUX and MP1 SRAM ctl.
+- Next: commit/push 0143, run CI, rebuild payload/image, flash, and check
+  whether the SPMC writes stick and CPU4 finally writes the NS trace.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
