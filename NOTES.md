@@ -88,10 +88,12 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
   `94f88ec5...417868`; boot image
   `xnul/out/xnul-boot-0134-8cpu-a53-rw.img` 16,683,008 B, sha256
   `62da4c7a...1ae6e0`.
-- Next: flash `xnul-boot-0134-8cpu-a53-rw.img`, reboot, capture the
-  `ANGELICA REG pre/post/timeout` lines. If boot4 is valid, ATF ran and the
-  failure is CPU4 entry/power; if boot4 is 0/3, ATF's bootaddr write did not
-  happen and cluster1 power-on is the target.
+- Flashed `xnul-boot-0134-8cpu-a53-rw.img` with `fastboot flash boot` and
+  rebooted. USB did not enumerate within 2 minutes and no ADB/fastboot device
+  appeared; waiting for the screen photo or recovery log pull to read the
+  `ANGELICA REG pre/post/timeout` lines.
+- If boot4 is valid, ATF ran and the failure is CPU4 entry/power; if boot4 is
+  0/3, ATF's bootaddr write did not happen and cluster1 power-on is the target.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
