@@ -157,17 +157,23 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
   therefore not the right check.
 - If boot4 is valid, ATF ran and the failure is CPU4 entry/power; if boot4 is
   0/3, ATF's bootaddr write did not happen and cluster1 power-on is the target.
-- GitHub deliberately cancels `macos-14` jobs during the retirement brownout
-  (2026-10-31 14:00 UTC - 2026-11-01 00:00 UTC); runs `41209687453`,
-  `41209854862` and `41210007154` were cancelled before a runner was assigned,
-  so 0141 has no kernel artifact yet. `macos-14` is fully retired on
-  2026-11-02.
+- GitHub deliberately cancelled `macos-14` jobs during the retirement
+  brownout (2026-10-31 14:00 UTC - 2026-11-01 00:00 UTC); runs `41209687453`,
+  `41209854862` and `41210007154` were cancelled before a runner was assigned.
+  `macos-14` is fully retired on 2026-11-02.
 - `0142-angelica-iorpc-kernelcontent.patch` backports the kernel-only
   `IORPC.kernelContent` field (both IORPC headers) and fills it in
   `IOUserServer::server` / `IOUserServerUEXTTrap`, matching later xnu. This is
-  required by Xcode 16's iig; the workflow now uses `macos-15` (Xcode 16)
-  instead of relying on `macos-14`'s Xcode 15. Patch applies cleanly after
-  0141; CI for 0141+0142 is the next build.
+  required by Xcode 16's iig; the workflow now uses `macos-15` (Xcode 16).
+- CI `41210390380` passed on `6b2d4f0` with `macos-15`/Xcode 16; the log
+  confirms 0141 and 0142 applied and the buildtree contains the L2/SPMC and
+  kernelContent changes. Kernel `xnu/out-0141/kernel.development.angelica`
+  17,149,280 B sha256 `d65d5bd8...e0273d`. Payload
+  `xnul/out/payload-0141-a53-rw.bin` 16,537,680 B sha256 `86cc4ae8...f5091`;
+  boot image `xnul/out/xnul-boot-0141-8cpu-a53-rw.img` 16,648,192 B sha256
+  `28f9fabb...8f457`; unpacked ramdisk byte-matches the payload
+  (`xnul/out/check-0141`). Awaiting user FASTBOOT to flash and collect the
+  timeout panic.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
