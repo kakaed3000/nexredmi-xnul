@@ -1,0 +1,13 @@
+--- a/bsd/dev/angelica_usb.c
++++ b/bsd/dev/angelica_usb.c
+@@ -1434,9 +1434,7 @@
+ 	static char chunk[1400];
+ 	socket_t so = NULL;
+ 	struct sockaddr_in to;
+-	uint64_t pos = angelica_log_position();
+-
+-	pos = pos > 65536 ? pos - 65536 : 0;
++	uint64_t pos = 0;
+ 	bzero(&to, sizeof(to));
+ 	to.sin_len = sizeof(to);
+ 	to.sin_family = AF_INET;
