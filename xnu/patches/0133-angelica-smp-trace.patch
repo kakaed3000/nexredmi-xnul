@@ -14,7 +14,7 @@
  
  /* SMCCC 1.0: x0 is the signed PSCI result; do not assume x1-x17 survive. */
  static int32_t
-@@ -157,12 +160,16 @@
+@@ -157,13 +160,19 @@
  			panic("ANGELICA CPU: cpu=%u processor_start failed: %d", i, kr);
  		}
  		/* processor_start() is asynchronous for secondaries in this XNU. */
@@ -25,16 +25,20 @@
  			if (mach_absolute_time() > deadline) {
 -				IOLog("ANGELICA CPU: cpu=%u mpidr=0x%x NOT alive after 5s\n",
 -				    i, topology->cpus[i].phys_id);
+-				panic("ANGELICA CPU: cpu=%u startup timeout (reset/MMU/GIC/SGI)", i);
 +				flush_dcache((vm_offset_t)&angelica_trace[i], 8, 0);
 +				uint64_t trace = angelica_trace[i];
 +				IOLog("ANGELICA CPU: cpu=%u mpidr=0x%x NOT alive after 20s init=%u sgi=%u trace=0x%llx\n",
 +				    i, topology->cpus[i].phys_id,
 +				    __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
 +				    angelica_cpu_signal_is_enabled(i), trace);
- 				panic("ANGELICA CPU: cpu=%u startup timeout (reset/MMU/GIC/SGI)", i);
++				panic("ANGELICA CPU: cpu=%u startup timeout init=%u sgi=%u trace=0x%llx",
++				    i, __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
++				    angelica_cpu_signal_is_enabled(i), trace);
  			}
  			IOSleep(1);
-@@ -240,11 +247,15 @@
+ 		}
+@@ -240,11 +249,15 @@
  	    __atomic_load_n(&initialized, __ATOMIC_ACQUIRE) != 0) {
  		panic("ANGELICA CPU: cpu=%u unsupported restart", getCPUNumber());
  	}
@@ -132,3 +136,66 @@
  	b		EXT(LowResetVectorBase)
  #endif /* ANGELICA */
  
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -727,6 +727,9 @@
+ 	cpu_machine_idle_init(FALSE);
+ 
+ 	cpu_init();
++	if (cpu_data_ptr->cpu_number != 0) {
++		kprintf("ANGELICA INIT: cpu %u cpu_init done\n", cpu_data_ptr->cpu_number);
++	}
+ 
+ #ifdef  APPLETYPHOON
+ 	if ((cpus_defeatures & (0xF << 4 * cpu_data_ptr->cpu_number)) != 0) {
+@@ -755,7 +758,13 @@
+ 		PE_init_platform(TRUE, NULL);
+ 		commpage_update_timebase();
+ 	}
++	if (cpu_data_ptr->cpu_number != 0) {
++		kprintf("ANGELICA INIT: cpu %u PE_init_cpu enter\n", cpu_data_ptr->cpu_number);
++	}
+ 	PE_init_cpu();
++	if (cpu_data_ptr->cpu_number != 0) {
++		kprintf("ANGELICA INIT: cpu %u PE_init_cpu done\n", cpu_data_ptr->cpu_number);
++	}
+ 
+ 	fiq_context_init(TRUE);
+ 	cpu_data_ptr->rtcPop = EndOfAllTime;
+@@ -797,6 +806,9 @@
+ #endif
+ 
+ 
++	if (cpu_data_ptr->cpu_number != 0) {
++		kprintf("ANGELICA INIT: cpu %u slave_main\n", cpu_data_ptr->cpu_number);
++	}
+ 	slave_main(NULL);
+ }
+ 
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -144,7 +144,14 @@
+ 	}
+ 
+ 	// Find the redistributor for this processor
++#if defined(ANGELICA)
++	kprintf("ANGELICA GIC: cpu %u enter find_gicr (phys 0x%llx)\n",
++	    ml_get_cpu_number_local(), __builtin_arm_rsr64("MPIDR_EL1") & 0xffffULL);
++#endif
+ 	vm_offset_t gicr_pe_base = find_gicr_pe_base();
++#if defined(ANGELICA)
++	kprintf("ANGELICA GIC: cpu %u gicr %p\n", ml_get_cpu_number_local(), (void *)gicr_pe_base);
++#endif
+ 
+ 	// Mark this PE to be awake
+ 	uint32_t gicr_waker = gicr_read32(GICR_WAKER);
+@@ -184,6 +191,9 @@
+ 	gicr_write32(GICR_ISENABLER0, (1 << 27));
+ #endif /* ANGELICA */
+ 
++#if defined(ANGELICA)
++	kprintf("ANGELICA GIC: cpu %u redistributor awake\n", ml_get_cpu_number_local());
++#endif
+ 	// Enable system register access
+ 	uint64_t icc_sre = __builtin_arm_rsr64("ICC_SRE_EL1");
+ 	icc_sre |= ICC_SRE_SRE;
