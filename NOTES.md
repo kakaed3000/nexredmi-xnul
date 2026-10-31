@@ -157,6 +157,17 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
   therefore not the right check.
 - If boot4 is valid, ATF ran and the failure is CPU4 entry/power; if boot4 is
   0/3, ATF's bootaddr write did not happen and cluster1 power-on is the target.
+- GitHub deliberately cancels `macos-14` jobs during the retirement brownout
+  (2026-10-31 14:00 UTC - 2026-11-01 00:00 UTC); runs `41209687453`,
+  `41209854862` and `41210007154` were cancelled before a runner was assigned,
+  so 0141 has no kernel artifact yet. `macos-14` is fully retired on
+  2026-11-02.
+- `0142-angelica-iorpc-kernelcontent.patch` backports the kernel-only
+  `IORPC.kernelContent` field (both IORPC headers) and fills it in
+  `IOUserServer::server` / `IOUserServerUEXTTrap`, matching later xnu. This is
+  required by Xcode 16's iig; the workflow now uses `macos-15` (Xcode 16)
+  instead of relying on `macos-14`'s Xcode 15. Patch applies cleanly after
+  0141; CI for 0141+0142 is the next build.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
@@ -649,7 +660,7 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
 - Base ADT: iPhone 8 d20ap DeviceTree from iOS 16.7.16 IPSW (tools/remotezip.py + tools/adt.py; LZFSE payload).
   Template values are empty: the loader must fill chosen/*, memory-map, cpu*/reg etc. like iBoot.
 - XNU build: GitHub Actions (dipa-studio/ios-angelica, xnu.yml) via blacktop/darwin-xnu-build, MACOS_VERSION=13.5.
-  New-clang fixes in xnu/patches; Xcode 16 iig is incompatible (IORPC.kernelContent) -> macos-14 runner, oldest Xcode.
+  New-clang fixes in xnu/patches; 0142 backports `IORPC.kernelContent` so Xcode 16's iig works; CI uses macos-15.
 
 ## Kernel architecture plan (ANGELICA machine config)
 - First stock build (VMAPPLE) is arm64e (PAC). the reference cores = ARMv8.2, no PAC -> ANGELICA must build plain arm64
