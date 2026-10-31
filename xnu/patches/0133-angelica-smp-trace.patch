@@ -1,10 +1,11 @@
 --- a/iokit/Kernel/arm/AngelicaCPU.cpp
 +++ b/iokit/Kernel/arm/AngelicaCPU.cpp
-@@ -20,10 +20,13 @@
+@@ -20,10 +20,14 @@
  
  extern "C" void angelica_secondary_entry(void);
  extern "C" boolean_t angelica_cpu_signal_is_enabled(unsigned int cpu);
 +extern "C" void flush_dcache(vm_offset_t addr, unsigned length, int phys);
++extern "C" uint64_t angelica_trace_slot_pa;
  
  class AngelicaCPU;
  static AngelicaCPU *angelica_cpus[MAX_CPUS];
@@ -14,7 +15,7 @@
  
  /* SMCCC 1.0: x0 is the signed PSCI result; do not assume x1-x17 survive. */
  static int32_t
-@@ -157,13 +160,19 @@
+@@ -157,13 +161,19 @@
  			panic("ANGELICA CPU: cpu=%u processor_start failed: %d", i, kr);
  		}
  		/* processor_start() is asynchronous for secondaries in this XNU. */
@@ -38,7 +39,7 @@
  			}
  			IOSleep(1);
  		}
-@@ -240,11 +249,15 @@
+@@ -240,11 +250,17 @@
  	    __atomic_load_n(&initialized, __ATOMIC_ACQUIRE) != 0) {
  		panic("ANGELICA CPU: cpu=%u unsupported restart", getCPUNumber());
  	}
@@ -49,11 +50,13 @@
 +	angelica_trace[id] = 0xaa00 | id;
 +	flush_dcache((vm_offset_t)&angelica_trace[id], 8, 0);
 +	angelica_trace_pa[id] = ml_static_vtop((vm_offset_t)&angelica_trace[id]);
-+	IOLog("ANGELICA CPU: cpu=%u CPU_ON target=0x%x entry_pa=0x%llx context=0x%llx\n",
++	angelica_trace_slot_pa = angelica_trace_pa[id];
++	flush_dcache((vm_offset_t)&angelica_trace_slot_pa, 8, 0);
++	IOLog("ANGELICA CPU: cpu=%u CPU_ON target=0x%x entry_pa=0x%llx trace_pa=0x%llx\n",
 +	    id, cpu->phys_id, (uint64_t)entry, angelica_trace_pa[id]);
  	__builtin_arm_dsb(DSB_SY);
 -	int32_t rc = angelica_psci_cpu_on(cpu->phys_id, entry, getCPUNumber());
-+	int32_t rc = angelica_psci_cpu_on(cpu->phys_id, entry, angelica_trace_pa[id]);
++	int32_t rc = angelica_psci_cpu_on(cpu->phys_id, entry, 0);
  	IOLog("ANGELICA CPU: cpu=%u PSCI CPU_ON rc=%d\n", getCPUNumber(), rc);
  	/* cpu_start() discards PE_cpu_start's return; do not silently carry on. */
  	if (rc != 0) {
@@ -93,11 +96,26 @@
  	b		.									// Hang if the handler is NULL or returns
  
  	.align 3
-@@ -288,8 +306,19 @@
+@@ -209,6 +227,11 @@
+ 	.globl  EXT(ResetHandlerData)
+ LEXT(ResetHandlerData)
+ 	.space  (rhdSize_NUM),0		// (filled with 0s)
++	.section __DATA,__data
++	.align 3
++	.globl EXT(angelica_trace_slot_pa)
++LEXT(angelica_trace_slot_pa)
++	.space 8
+ 	.text
+ 
+ 
+@@ -288,8 +311,22 @@
  	.align 2
  	.globl EXT(angelica_secondary_entry)
  LEXT(angelica_secondary_entry)
-+	/* x0 is the trace-slot physical address (PSCI context). */
++	/* CPU0 puts this CPU's trace-slot PA in a global; PSCI context is unused. */
++	adrp	x0, EXT(angelica_trace_slot_pa)@page
++	add		x0, x0, EXT(angelica_trace_slot_pa)@pageoff
++	ldr		x0, [x0]
 +	mov		x28, #0
 +	cbz		x0, 1f
 +	mov		x9, #1
@@ -113,7 +131,7 @@
  	cmp		x1, #0x4
  	b.eq	Langelica_secondary_el1
  	cmp		x1, #0x8
-@@ -322,10 +351,22 @@
+@@ -322,10 +359,22 @@
  	msr		SPSR_EL2, x1
  	eret
  Langelica_secondary_bad_el:
