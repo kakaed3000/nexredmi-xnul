@@ -82,9 +82,16 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
   exposes it only under `PEXPERT_KERNEL_PRIVATE || MACH_KERNEL_PRIVATE`, while
   the build defines only `XNU_KERNEL_PRIVATE`. The patch now has a local
   `extern "C" vm_offset_t ml_io_map(vm_offset_t, vm_size_t);`; rerun pending.
-- Next: push the fix, CI, flash, capture the REG lines. If boot4 is valid,
-  ATF ran and the failure is CPU4 entry/power; if boot4 is 0/3, ATF's bootaddr
-  write did not happen and cluster1 power-on is the target.
+- CI `41200109324` succeeded on `9db4b8b`; kernel
+  `xnu/out-0134/kernel.development.angelica` 17,185,760 B, sha256
+  `e9982fbf...756187`. Payload `xnul/out/payload-0134-a53-rw.bin` sha256
+  `94f88ec5...417868`; boot image
+  `xnul/out/xnul-boot-0134-8cpu-a53-rw.img` 16,683,008 B, sha256
+  `62da4c7a...1ae6e0`.
+- Next: flash `xnul-boot-0134-8cpu-a53-rw.img`, reboot, capture the
+  `ANGELICA REG pre/post/timeout` lines. If boot4 is valid, ATF ran and the
+  failure is CPU4 entry/power; if boot4 is 0/3, ATF's bootaddr write did not
+  happen and cluster1 power-on is the target.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
