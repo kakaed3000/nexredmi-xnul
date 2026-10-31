@@ -107,7 +107,15 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
 - `0136-angelica-cluster1-bus-release.patch` replays the MP1 top power bits
   and stock ATF's `INFRA_TOPAXI_PROTECTEN_1_CLR = 0x0800c800`
   (`0x100012ac`) before CPU_ON, and adds `prot=before->after` and
-  `top=before->after` to the panic. Build/flash pending.
+  `top=before->after` to the panic. Flashed; CPU4 still stuck. Panic:
+  `prot=f9fcc844->f9fcc844 top=110011a3->110011a7`; the direct CLR write did
+  not move the MP1 status bits, and `mp1top`/`mp1c0` stayed in the same
+  partially-on state. The cluster is reported on (PWR_STATUS bit15), so ATF
+  skips its cluster power-on path.
+- `0137-angelica-cluster1-power-cycle.patch` powers CPU4 and cluster1 down
+  (`PWR_ON`/`PWR_ON_2ND` clear, wait for PWR_STATUS bits16/15 to clear) before
+  CPU_ON, forcing ATF to take the cluster-off path and release bus protection
+  itself. Panic adds `cyc pwr/top/prot before->after`. Build/flash pending.
 - If boot4 is valid, ATF ran and the failure is CPU4 entry/power; if boot4 is
   0/3, ATF's bootaddr write did not happen and cluster1 power-on is the target.
 

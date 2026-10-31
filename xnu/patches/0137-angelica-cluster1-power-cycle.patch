@@ -1,0 +1,100 @@
+--- a/iokit/Kernel/arm/AngelicaCPU.cpp
++++ b/iokit/Kernel/arm/AngelicaCPU.cpp
+@@ -36,6 +36,8 @@
+ static uint32_t angelica_prot_after;
+ static uint32_t angelica_top_before;
+ static uint32_t angelica_top_after;
++static uint32_t angelica_pwr_before;
++static uint32_t angelica_pwr_after;
+ 
+ /*
+  * Stock ATF's SPMC tables describe MP0/MP1 boot addresses at 0x10200038 and
+@@ -89,27 +91,45 @@
+ }
+ 
+ /*
+- * Stock ATF's cluster power-on path releases MP1 bus protection through
+- * INFRA_TOPAXI_PROTECTEN_1_CLR. CPU4 can be powered and have a valid boot
+- * address while still stalling on instruction fetch behind that protection.
+- * Replay the MP1 part before asking PSCI to start CPU4.
++ * CPU4 can be powered with a valid ATF boot address while remaining on
++ * ON_PENDING forever. The cluster is already reported on, so ATF skips its
++ * cluster power-on path, which is what releases MP1 bus protection. Power
++ * CPU4 and cluster1 down first; the following PSCI CPU_ON then takes the
++ * cluster-off path and replays the full stock sequence (top power, bus
++ * protect release, boot address, CPU power).
+  */
+ static void
+-angelica_cluster1_bus_release(void)
++angelica_cluster1_power_cycle(void)
+ {
+-	angelica_prot_before = angelica_reg_read(0x10001258);
++	angelica_pwr_before = angelica_reg_read(0x10006180);
+ 	angelica_top_before = angelica_reg_read(0x10006218);
+-	uint32_t top = angelica_top_before;
+-	top &= ~0x8U;   /* PWR_ON_2ND */
+-	top |= 0x1U;    /* PWR_RST_B */
+-	top &= ~0x10U;  /* PWR_CLK_DIS */
+-	top |= 0x4U;    /* PWR_ON */
+-	angelica_reg_write(0x10006218, top);
++	angelica_prot_before = angelica_reg_read(0x10001258);
++
++	uint32_t cpu = angelica_reg_read(0x1000621c);
++	angelica_reg_write(0x1000621c, cpu & ~(0x4U | 0x8U));
++	__builtin_arm_dsb(DSB_SY);
++	for (unsigned int i = 0; i < 1000; i++) {
++		if ((angelica_reg_read(0x10006180) & 0x10000U) == 0) {
++			break;
++		}
++		IOSleep(1);
++	}
++
++	uint32_t top = angelica_reg_read(0x10006218);
++	angelica_reg_write(0x10006218, top & ~(0x4U | 0x8U));
+ 	__builtin_arm_dsb(DSB_SY);
++	for (unsigned int i = 0; i < 1000; i++) {
++		if ((angelica_reg_read(0x10006180) & 0x8000U) == 0) {
++			break;
++		}
++		IOSleep(1);
++	}
++
+ 	angelica_reg_write(0x100012ac, 0x0800c800U);
+ 	__builtin_arm_dsb(DSB_SY);
+-	angelica_prot_after = angelica_reg_read(0x10001258);
++	angelica_pwr_after = angelica_reg_read(0x10006180);
+ 	angelica_top_after = angelica_reg_read(0x10006218);
++	angelica_prot_after = angelica_reg_read(0x10001258);
+ }
+ 
+ static void
+@@ -289,7 +309,7 @@
+ 				panic("ANGELICA CPU: cpu=%u startup timeout init=%u sgi=%u trace=0x%llx trace_pa=0x%llx affinity=%d->%d\n"
+ 				    "ANGELICA REG pwr=%08x/%08x mp0top=%08x mp0c0=%08x mp1top=%08x mp1c0=%08x\n"
+ 				    "ANGELICA REG boot0=%08x boot4=%08x spark1=%08x bypass=%08x\n"
+-				    "ANGELICA REG prot=%08x->%08x top=%08x->%08x",
++				    "ANGELICA REG cyc pwr=%08x->%08x top=%08x->%08x prot=%08x->%08x",
+ 				    i, __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
+ 				    angelica_cpu_signal_is_enabled(i), trace,
+ 				    angelica_trace_pa[i], angelica_affinity_before[i],
+@@ -299,8 +319,9 @@
+ 				    angelica_reg_read(0x10006218), angelica_reg_read(0x1000621c),
+ 				    angelica_reg_read(0x10200038), angelica_reg_read(0x10200238),
+ 				    angelica_reg_read(0x10203c30), angelica_reg_read(0x100062b4),
+-				    angelica_prot_before, angelica_prot_after,
+-				    angelica_top_before, angelica_top_after);
++				    angelica_pwr_before, angelica_pwr_after,
++				    angelica_top_before, angelica_top_after,
++				    angelica_prot_before, angelica_prot_after);
+ 			}
+ 			IOSleep(1);
+ 		}
+@@ -387,7 +408,7 @@
+ 	IOLog("ANGELICA CPU: cpu=%u CPU_ON target=0x%x entry_pa=0x%llx trace_pa=0x%llx\n",
+ 	    id, cpu->phys_id, (uint64_t)entry, angelica_trace_pa[id]);
+ 	if (((cpu->phys_id >> 8) & 0xff) != 0) {
+-		angelica_cluster1_bus_release();
++		angelica_cluster1_power_cycle();
+ 	}
+ 	__builtin_arm_dsb(DSB_SY);
+ 	angelica_log_smp_regs(id, "pre");
