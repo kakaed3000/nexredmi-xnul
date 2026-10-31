@@ -255,8 +255,28 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
   Rationale: SIP is stock Android's cluster-down path and may update ATF's
   PSCI state so the following CPU_ON takes the cluster-off path, but this
   is unproven.
-- Local patch ordering was dry-run against the post-0143 buildtree; the
-  patch is added but not yet committed, built in CI or flashed.
+- The patch was dry-run against the post-0143 buildtree, committed as
+  `623fc72`, and CI run `41218778364` passed on `356e01e`. Kernel
+  `kernel.development.angelica` 17,149,280 B sha256
+  `ab0db149...210a3a3`. Payload `xnul/out/payload-0144-a53-rw.bin`
+  16,537,680 B sha256 `bb1e140d...5ccb5e`; boot image
+  `xnul/out/xnul-boot-0144-8cpu-a53-rw.img` 16,648,192 B sha256
+  `47727a27...e6f9ed`; unpacked ramdisk byte-matches (`check-0144`).
+- 0144 was flashed (`fastboot flash boot`, log
+  `/tmp/opencode/flash-0144.log`), but the timeout panic text was not
+  captured before shutdown. User reports the second-cluster goal is still
+  **NOT achieved**; treat 0144/SIP as failed until a panic or UART log
+  proves otherwise.
+- Preserved under `/mnt/data/redmi9c-ios/artifacts/2026-10-31/`: 0144
+  kernel/boot/payload/source/patch/flash log, 0143 kernel, ATF disassembly,
+  Rabbit UART baseline, buildtree-0143, mtk-atf/lk sources and rabbit
+  kernel. `/tmp` is tmpfs and will be lost on shutdown.
+- Next: after the phone is available, flash or re-flash 0144 if needed and
+  capture the screen panic (especially `sipdown`, `prot`, `arch0/arch1`,
+  `c1ctl`, `pwr`). If SIP has no effect, inspect whether `0x1020023c`
+  receives the NS entrypoint and why ATF never enters the cluster-on path;
+  the next code target is a direct PSCI cluster-off/on assertion or
+  CPUSYS1 SPARK/clock programming, not another NS SPMC write.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
