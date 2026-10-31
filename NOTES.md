@@ -95,7 +95,19 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
   output apparently replaces/omits them).
 - `0135-angelica-smp-regs-panic.patch` embeds `pwr`, `mp0top`, `mp0c0`,
   `mp1top`, `mp1c0`, `boot0`, `boot4`, `spark1` and `bypass` directly in the
-  panic string. Applies after 0134; build/flash pending.
+  panic string. CI `41201470018` succeeded; flashed image panicked with:
+  `pwr=0001df4c/0001df4c mp0top=mp0c0=d8001845 mp1top=d18011a7
+  mp1c0=d10001b7`, `boot0=boot4=47d818d8`, `spark1=0 bypass=0`.
+  `pwr` has MP1_CPUTOP (bit15) and MP1_CPU0 (bit16) on, so ATF powered CPU4
+  and wrote the ATF warm entry (`0x47d818d8`) to `0x10200238`; the CPU still
+  never writes the trace slot (`0xaa04` remains CPU0's). MP1_CPU0_PWR_CON has
+  SRAM_PDN/CKISO/ISO bits set while CPU0's does not, so the failure is below
+  the non-secure entry, most likely MP1 bus protection left closed because
+  PSCI saw cluster1 already powered and skipped `spm_poweron_cluster`.
+- `0136-angelica-cluster1-bus-release.patch` replays the MP1 top power bits
+  and stock ATF's `INFRA_TOPAXI_PROTECTEN_1_CLR = 0x0800c800`
+  (`0x100012ac`) before CPU_ON, and adds `prot=before->after` and
+  `top=before->after` to the panic. Build/flash pending.
 - If boot4 is valid, ATF ran and the failure is CPU4 entry/power; if boot4 is
   0/3, ATF's bootaddr write did not happen and cluster1 power-on is the target.
 
