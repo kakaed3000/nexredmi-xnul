@@ -194,11 +194,69 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
   16,537,680 B sha256 `3e4ee6a7...bc2e9ea`; boot image
   `xnul/out/xnul-boot-0143-8cpu-a53-rw.img` 16,648,192 B sha256
   `34a19384...fdfac1c`; unpacked ramdisk byte-matches (`check-0143`).
-  Awaiting user FASTBOOT to flash 0143 and collect the timeout panic.
-- Next: flash 0143; check `mp1spmc`/`c1ctl` before->after, whether writes
-  stick, and whether CPU4 finally writes the NS trace. If writes stick but
-  CPU4 still does not run, next target `CPUSYS1_SPARKEN`/`SPARKVRETCNTRL`/
-  `AMUXSEL` and `MP1_CPUTOP_SPMC_SRAM_CTL`.
+  Flashed 2026-10-31; the timeout panic was captured (see the next section).
+
+## 2026-10-31 — 0143 result, SIP/ATF decode, 0144 prepared
+
+- 0143 was flashed and panicked as designed: `cpu=4 startup timeout init=0
+  sgi=0 trace=0xaa04 affinity=1->2 now=2`, `mp1top=d0001045
+  mp1c0=d0001045 pwr=0001df4c prot=f9fcc844`, `entry=6142f000
+  word=d280001c`, `boot0=47d618d8 boot4=47d810d8`, prepare
+  `c1ctl=0->80000000`, live `c1ctl/spark1=0`. CPU4 power domains and
+  PWR_ACK look on, but CPU4 never runs ATF or the NS trampoline.
+- The 0143 non-secure writes do not stick: `MP1_CPUTOP_SPMC_CTL 0x1020078c`
+  stays `0x0640c043`, and `CPUSYS1_CPU0_SPMC_CTL 0x10203c30` reads back
+  `0x80000000` once and 0 later. Also, the panic fields named
+  `spark0/spark1` actually read `CPUSYS0/1_CPU0_SPMC_CTL`
+  (`0x10201c30/0x10203c30`), not SPARKEN.
+- SIP decode: `MTK_SIP_SMC_AARCH_BIT=0x40000000`;
+  `POWER_DOWN_CLUSTER=0xC2000210`, `POWER_UP_CLUSTER=0xC2000211`,
+  `POWER_DOWN_CORE=0xC2000212`, `POWER_UP_CORE=0xC2000213`
+  (`mtk_secure_api.h`). `mt_secure_call` passes the FID in x0 and arg0 in
+  x1; ATF handlers receive arg0 in w20 and arg1 in w21. The MIUI ATF
+  dispatcher implements `0x210/0x212/0x214` but **not `0x211/0x213`**:
+  SIP power-up for cluster/core does not exist in this BL31, so the old
+  "call POWER_UP_CLUSTER" hypothesis is dead. Stock MT6765 also compiles
+  out `POWER_UP_CLUSTER`; it uses PSCI for power-up and SIP only for
+  CPU/cluster power-down (`mtk_hotplug_cb.c:215/229`,
+  `mtk_hps_api.c:512`).
+- ATF `spm_poweroff_cluster` (`0xf4d8`) dispatches on x2: 0 -> `0x12fe0`
+  (power off), non-zero -> `0x130a0` (power on). The SIP `0x210` handler at
+  `0x5030` hardcodes x2=0, so `0x130a0` is reachable only from
+  `plat_affinst_on` (`0xeef8`). `0x12fe0` SETs `0x100012a8` with
+  `0x0800c800` (cluster1) or `0x04003400` (cluster0), polls `0x10001258`,
+  and waits for `PWR_STATUS` bit15/bit8 to clear. `0x130a0` sets bit4 in
+  `0x1020078c`/`0x10200788`, waits for bit15/bit8, then writes CLR
+  `0x100012ac` with the same mask and logs
+  `spmc: power on cluster %d successfully`.
+- `plat_affinst_on` at `0xeea0` (string path `plat/mediatek/mt6765/
+  plat_pm.c`): afflvl!=0 checks `0x12cd0(cluster)` (cluster0 `0x100`,
+  cluster1 `0x8000`) and calls `0x130a0` only if the cluster is off;
+  afflvl==0 calls `0x12c90` (CPU PWR_CON bit), `0x12c60` (writes the
+  supplied entrypoint to `0x1020003c`/`0x1020023c`), and `0x12e7c`
+  (MP0/MP1 CPUTOP SPMC bits 0/4). If PSCI never issues the cluster-level
+  on, the CLR in `0x130a0` never runs.
+- Bus-protection correction: `prot=0xf9fcc844` also contains MP0 bits
+  10/12/13/26 while CPU0-3 are running, so bus protection is probably not
+  what blocks CPU4 fetch. The CLR still only comes from ATF `0x130a0`; the
+  NS CLR write in 0136 was ignored.
+- `0x10200238` is MP1 `MISC_CONFIG2` and currently holds ATF's warm entry
+  `0x47d810d8`; `0x1020023c` is `MISC_CONFIG3` and ATF `0x12c60` writes the
+  NS entrypoint there. 0143 already read `arch0/arch1` in the panic, but
+  not before/after CPU_ON; 0144 adds `prot/arch0/arch1` to the pre/post
+  register logs so this can be resolved from one boot.
+- `0144-angelica-sip-cluster-down.patch` adds
+  `angelica_sip_power_down_cluster()` (SMC `0xC2000210`, x1=cluster) and in
+  `startCPU` for cluster1: wake GICR; only on CPU4 run the manual power
+  cycle, then SIP `POWER_DOWN_CLUSTER(1)`, log the return value, then
+  prepare CPU4; CPU5-7 skip cluster setup. The NS writes to
+  `0x1020078c` and `0x10203c30` are removed (reads/snapshots remain), and
+  the timeout adds `timeout-live prot/sipdown/c1ctl/c1en/c1vret/c1amux`.
+  Rationale: SIP is stock Android's cluster-down path and may update ATF's
+  PSCI state so the following CPU_ON takes the cluster-off path, but this
+  is unproven.
+- Local patch ordering was dry-run against the post-0143 buildtree; the
+  patch is added but not yet committed, built in CI or flashed.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
