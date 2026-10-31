@@ -129,7 +129,12 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
   `d0001845` with those bits clear.
 - `0139-angelica-mp1top-sram.patch` clears MP1_CPUTOP
   ISO/CKISO/CLAMP/SRAM_PDN and sets SRAM_ISOINT_B before CPU_ON, with
-  readback. Build/flash pending.
+  readback. Flashed: `top1=110011a3->11001041`, final `mp1top=d0001045`
+  (same low power bits as CPU0), but CPU4 still did not run.
+- `0140-angelica-cpu4-reset-pulse.patch` also clears CPU4 `PWR_RST_B`
+  during the power cycle and reports `AFFINITY_INFO` again at timeout
+  (`affinity=... now=...`) to distinguish an ATF hang from an NS entry
+  failure. Build/flash pending.
 - `boot4=0x47d818d8` is ATF's `bl31_warm_entrypoint`, not XNU's
   `angelica_secondary_entry` (PA `0x6142f000`). The non-secure entry is kept
   in ATF's per-CPU `warmboot_ep_info`; comparing boot4 with the trampoline is

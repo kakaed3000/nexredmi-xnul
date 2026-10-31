@@ -1,0 +1,31 @@
+--- a/iokit/Kernel/arm/AngelicaCPU.cpp
++++ b/iokit/Kernel/arm/AngelicaCPU.cpp
+@@ -122,7 +122,7 @@
+ 	angelica_prot_before = angelica_reg_read(0x10001258);
+ 
+ 	uint32_t cpu = angelica_reg_read(0x1000621c);
+-	angelica_reg_write(0x1000621c, cpu & ~(0x4U | 0x8U));
++	angelica_reg_write(0x1000621c, cpu & ~(0x1U | 0x4U | 0x8U));
+ 	__builtin_arm_dsb(DSB_SY);
+ 	for (unsigned int i = 0; i < 1000; i++) {
+ 		if ((angelica_reg_read(0x10006180) & 0x10000U) == 0) {
+@@ -413,7 +413,9 @@
+ 				    __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
+ 				    angelica_cpu_signal_is_enabled(i), trace);
+ 				angelica_log_smp_regs(i, "timeout");
+-				panic("ANGELICA CPU: cpu=%u startup timeout init=%u sgi=%u trace=0x%llx trace_pa=0x%llx affinity=%d->%d\n"
++				int32_t affinity_now = angelica_psci_affinity_info(
++				    topology->cpus[i].phys_id, 0);
++				panic("ANGELICA CPU: cpu=%u startup timeout init=%u sgi=%u trace=0x%llx trace_pa=0x%llx affinity=%d->%d now=%d\n"
+ 				    "ANGELICA REG pwr=%08x/%08x mp0top=%08x mp0c0=%08x mp1top=%08x mp1c0=%08x\n"
+ 				    "ANGELICA REG boot0=%08x boot4=%08x spark1=%08x bypass=%08x\n"
+ 				    "ANGELICA REG cyc pwr=%08x->%08x top=%08x->%08x prot=%08x->%08x\n"
+@@ -422,7 +424,7 @@
+ 				    i, __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
+ 				    angelica_cpu_signal_is_enabled(i), trace,
+ 				    angelica_trace_pa[i], angelica_affinity_before[i],
+-				    angelica_affinity_after[i],
++				    angelica_affinity_after[i], affinity_now,
+ 				    angelica_reg_read(0x10006180), angelica_reg_read(0x10006184),
+ 				    angelica_reg_read(0x10006204), angelica_reg_read(0x10006208),
+ 				    angelica_reg_read(0x10006218), angelica_reg_read(0x1000621c),
