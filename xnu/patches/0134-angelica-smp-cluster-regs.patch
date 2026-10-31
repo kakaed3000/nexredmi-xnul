@@ -1,0 +1,102 @@
+--- a/iokit/Kernel/arm/AngelicaCPU.cpp
++++ b/iokit/Kernel/arm/AngelicaCPU.cpp
+@@ -12,6 +12,7 @@
+ #include <libkern/c++/OSNumber.h>
+ #include <arm64/proc_reg.h>
+ #include <machine/atomic.h>
++#include <machine/machine_routines.h>
+ #include <kern/clock.h>
+ #include <kern/processor.h>
+ #include <kern/thread.h>
+@@ -31,6 +32,63 @@
+ static int32_t angelica_affinity_before[ANGELICA_SMP_MAX_CPUS];
+ static int32_t angelica_affinity_after[ANGELICA_SMP_MAX_CPUS];
+ 
++/*
++ * Stock ATF's SPMC tables describe MP0/MP1 boot addresses at 0x10200038 and
++ * 0x10200238 with an 8-byte per-CPU stride. Read both clusters' power state
++ * and boot address around CPU_ON to see where cluster1 bring-up stops.
++ */
++struct angelica_reg_page {
++	vm_offset_t pa;
++	vm_offset_t va;
++};
++
++static struct angelica_reg_page angelica_reg_pages[] = {
++	{ 0x10006000, 0 },
++	{ 0x10200000, 0 },
++	{ 0x10201000, 0 },
++	{ 0x10203000, 0 },
++	{ 0x10226000, 0 },
++};
++
++static void
++angelica_map_smp_regs(void)
++{
++	for (unsigned int i = 0; i < sizeof(angelica_reg_pages) / sizeof(angelica_reg_pages[0]); i++) {
++		if (angelica_reg_pages[i].va == 0) {
++			angelica_reg_pages[i].va = ml_io_map(angelica_reg_pages[i].pa, 0x1000);
++		}
++	}
++}
++
++static uint32_t
++angelica_reg_read(uint32_t pa)
++{
++	for (unsigned int i = 0; i < sizeof(angelica_reg_pages) / sizeof(angelica_reg_pages[0]); i++) {
++		if ((pa & ~0xfffU) == angelica_reg_pages[i].pa && angelica_reg_pages[i].va != 0) {
++			return *(volatile uint32_t *)(angelica_reg_pages[i].va + (pa & 0xfffU));
++		}
++	}
++	return 0xffffffffU;
++}
++
++static void
++angelica_log_smp_regs(unsigned int id, const char *when)
++{
++	IOLog("ANGELICA REG %s cpu=%u pwr=%08x/%08x cpupwr=%08x/%08x cfg=%08x\n",
++	    when, id, angelica_reg_read(0x10006180), angelica_reg_read(0x10006184),
++	    angelica_reg_read(0x10006188), angelica_reg_read(0x1000618c),
++	    angelica_reg_read(0x10006000));
++	IOLog("ANGELICA REG %s cpu=%u mp0top=%08x mp0c0=%08x mp1top=%08x mp1c0=%08x bypass=%08x dormant=%08x\n",
++	    when, id, angelica_reg_read(0x10006204), angelica_reg_read(0x10006208),
++	    angelica_reg_read(0x10006218), angelica_reg_read(0x1000621c),
++	    angelica_reg_read(0x100062b4), angelica_reg_read(0x100062b8));
++	IOLog("ANGELICA REG %s cpu=%u boot0=%08x boot4=%08x spark0=%08x spark1=%08x seq0=%08x seq1=%08x emi=%08x\n",
++	    when, id, angelica_reg_read(0x10200038), angelica_reg_read(0x10200238),
++	    angelica_reg_read(0x10201c30), angelica_reg_read(0x10203c30),
++	    angelica_reg_read(0x10201638), angelica_reg_read(0x10203638),
++	    angelica_reg_read(0x10226000));
++}
++
+ /* SMCCC 1.0: x0 is the signed PSCI result; do not assume x1-x17 survive. */
+ static int32_t
+ angelica_psci_affinity_info(uint64_t target, uint64_t lowest)
+@@ -150,6 +208,7 @@
+ 	PE_parse_boot_argn("cpus", &requested, sizeof(requested));
+ 	IOLog("ANGELICA CPU: requested=%u selected=%u (limit=%u)\n",
+ 	    requested, topology->num_cpus, ANGELICA_SMP_MAX_CPUS);
++	angelica_map_smp_regs();
+ 
+ 	uint64_t deadline;
+ 	nanoseconds_to_deadline(10 * NSEC_PER_SEC, &deadline);
+@@ -185,6 +244,7 @@
+ 				    i, topology->cpus[i].phys_id,
+ 				    __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
+ 				    angelica_cpu_signal_is_enabled(i), trace);
++				angelica_log_smp_regs(i, "timeout");
+ 				panic("ANGELICA CPU: cpu=%u startup timeout init=%u sgi=%u trace=0x%llx trace_pa=0x%llx affinity=%d->%d",
+ 				    i, __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
+ 				    angelica_cpu_signal_is_enabled(i), trace,
+@@ -276,9 +336,11 @@
+ 	IOLog("ANGELICA CPU: cpu=%u CPU_ON target=0x%x entry_pa=0x%llx trace_pa=0x%llx\n",
+ 	    id, cpu->phys_id, (uint64_t)entry, angelica_trace_pa[id]);
+ 	__builtin_arm_dsb(DSB_SY);
++	angelica_log_smp_regs(id, "pre");
+ 	angelica_affinity_before[id] = angelica_psci_affinity_info(cpu->phys_id, 0);
+ 	int32_t rc = angelica_psci_cpu_on(cpu->phys_id, entry, angelica_trace_pa[id]);
+ 	angelica_affinity_after[id] = angelica_psci_affinity_info(cpu->phys_id, 0);
++	angelica_log_smp_regs(id, "post");
+ 	IOLog("ANGELICA CPU: cpu=%u PSCI CPU_ON rc=%d affinity %d->%d\n",
+ 	    id, rc, angelica_affinity_before[id], angelica_affinity_after[id]);
+ 	/* cpu_start() discards PE_cpu_start's return; do not silently carry on. */

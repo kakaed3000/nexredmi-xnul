@@ -10,6 +10,78 @@ UFS and Qualcomm hardware because they describe that reference device; the
 Redmi 9C has none of it. Its chain is BootROM (BROM) -> MediaTek preloader ->
 LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
 
+## 2026-10-22 — paused after AMFI shim; workspace cleaned
+
+- HEAD `7b8b3f9` (`0121-angelica-heartbeat-forever.patch`), on top of
+  `b012316` (`0120-angelica-amfi-iokit-shim.patch`) and `c7ecbfc`
+  (`0119-angelica-boot-logging.patch`). Branch `angelica` pushed to `kakaed`.
+- `0120` adds the built-in IOKit service `AppleMobileFileIntegrity` and
+  `AppleMobileFileIntegrityUserClient`. `launchd_cache_loader` opens the
+  service, calls selector 6 with scalar input 1 and a cdhash structure; the
+  shim returns `kIOReturnSuccess` (trusted) and logs the selector. This is the
+  fix for `Unable to find AMFI`.
+- CI `39793924869` (0120) success; kernel sha256
+  `87f96bbc...937971`. CI `39796686400` (0121) success; kernel sha256
+  `d0f30ab3...1fc452`, boot image
+  `xnul/out/xnul-boot-0121-a53-rw.img` sha256
+  `f4e36d7e...084b3`.
+- `0121` was flashed. Current cmdline:
+  `rd=msdcroot0 keepsyms=1 -enable_kprintf_spam debug=0x14c rootrw=1`.
+  Heartbeat now prints every 15 s forever (`ANGELICA alive N: init ...`).
+  After the AMFI fix the old 120 s heartbeat ended without a panic; the next
+  barrier was not confirmed before pausing.
+- App Store/FairPlay conclusion for this hardware: a real Apple ID/App Store
+  UI may be reachable, but encrypted IPA download/launch needs a genuine
+  device-bound FairPlay identity (SEP) or Apple keys. Practical route for App
+  Store apps is a real jailbroken iPhone donor + decrypted IPA sideload, not
+  the store on angelica. `payt0nc/fairplay-ksm` is server-side FairPlay
+  Streaming (video), not App Store IPA decryption, and does not help here.
+- Cleanup on 2026-10-22: removed old boot/payload/shim artifacts, `0118`
+  build trees, both `v1` rootfs copies, both `.simg` files, the 7 GB IPSW
+  scratch tree and the `tmp/opencode` build scratch. Kept the non-journaled
+  rootfs raw image (12 GB allocated), `angelica.adt`, kernel 0121 and boot
+  images/payloads 0118-rw, 0120, 0121, all patches, `kernel-src/`, `ref/`,
+  and the last lines of the persistent log tooling.
+- If resumed: boot 0121, wait for the next panic (heartbeat no longer stops),
+  pull the persistent log or photograph the framebuffer; then continue AMFI
+  selectors only if a later client needs them. For daily use, define a
+  realistic target that does not include the App Store.
+
+## 2026-10-31 — CPU4/cluster1 SPMC diagnostics (0134 prepared)
+
+- Current kernel reaches iOS userspace but only CPU0-3 run. `CPU_ON` for
+  affinity `0x100` is accepted (`AFFINITY_INFO 1->2`), yet CPU4 never writes
+  trace marker 1; timeout panic at `AngelicaCPU.cpp:192`.
+- Stock MIUI ATF (`/home/alex/Downloads/miui/images/tee.img`) static analysis:
+  - BL31 payload likely starts at file `0x800` (size `0x1f800`, ends at
+    `0x20000`). File `0x1000` is mid-code (`b 0xf74`), so the earlier
+    `d[0x1000:0x20800]` slice with base `0x1000` missed the first 0x800 bytes.
+  - In the `0x1c000` rodata page, data file offsets are code ADRP targets
+    `+0xc40` (e.g. SPMC strings at file `0x1cf60` = VA `0x1c320`; the
+    SPM_CPU_PWR/BOOTADDR/CLUSTER tables at file `0x1d0d8` = VA `0x1c498`).
+  - Table entries are `{addr, stride_shift}`:
+    `{0x10006208,2}`, `{0x1000621c,2}`, `{0x10200038,3}`,
+    `{0x10200238,3}`, `{0x10006204,0}`, `{0x10006218,0}`.
+    `3` = 8-byte per-CPU stride; `0x10200238` is CPU4's MP1 boot address
+    (`MP1_CPUCFG_BASE=0x10200200` from `mtk_dcm_autogen.h`).
+  - `mcucfg_set_bootaddr` at file `0x12c64` writes that register;
+    the `plat_affinst_on`-like function at `0xeea0` calls it at `0xef20`
+    (`w2==0` CPU path), then `spm_poweron_cpu` (`0x12e7c`) at `0xef2c`.
+    `spmc_init` at `0x12d04` programs `0x10006000`/`0x100062b4` and the
+    MP0/MP1 CPU power controls.
+  - No direct caller of `0xeea0` was found; it is presumably reached through
+    the PSCI platform-ops function-pointer table (not yet located).
+- `0134-angelica-smp-cluster-regs.patch` (102 lines) maps SPM/MCUCFG pages
+  with `ml_io_map` in `startAll` and logs `ANGELICA REG pre/post/timeout`:
+  power status `0x10006180..18c`, `0x10006000`,
+  `0x10006204/208/218/21c/2b4/2b8`, boot addresses
+  `0x10200038/0x10200238`, SPARK `0x10201c30/0x10203c30`,
+  sequences `0x10201638/0x10203638`, EMI `0x10226000`.
+  Validated with `patch -p1 --dry-run` on a post-0133 copy; not committed.
+- Next: commit/push `0134`, CI, flash, capture the REG lines. If boot4 is
+  valid, ATF ran and the failure is CPU4 entry/power; if boot4 is 0/3, ATF's
+  bootaddr write did not happen and cluster1 power-on is the target.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> BRANCH `angelica` (Redmi 9C, MT6765) - port started 2026-10-19 <<<
