@@ -71,16 +71,20 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
     MP0/MP1 CPU power controls.
   - No direct caller of `0xeea0` was found; it is presumably reached through
     the PSCI platform-ops function-pointer table (not yet located).
-- `0134-angelica-smp-cluster-regs.patch` (102 lines) maps SPM/MCUCFG pages
+- `0134-angelica-smp-cluster-regs.patch` (110 lines) maps SPM/MCUCFG pages
   with `ml_io_map` in `startAll` and logs `ANGELICA REG pre/post/timeout`:
   power status `0x10006180..18c`, `0x10006000`,
   `0x10006204/208/218/21c/2b4/2b8`, boot addresses
   `0x10200038/0x10200238`, SPARK `0x10201c30/0x10203c30`,
   sequences `0x10201638/0x10203638`, EMI `0x10226000`.
-  Validated with `patch -p1 --dry-run` on a post-0133 copy; not committed.
-- Next: commit/push `0134`, CI, flash, capture the REG lines. If boot4 is
-  valid, ATF ran and the failure is CPU4 entry/power; if boot4 is 0/3, ATF's
-  bootaddr write did not happen and cluster1 power-on is the target.
+  Validated with `patch -p1 --dry-run` on a post-0133 copy.
+- CI run `41199300429` failed: `ml_io_map` is undeclared because the header
+  exposes it only under `PEXPERT_KERNEL_PRIVATE || MACH_KERNEL_PRIVATE`, while
+  the build defines only `XNU_KERNEL_PRIVATE`. The patch now has a local
+  `extern "C" vm_offset_t ml_io_map(vm_offset_t, vm_size_t);`; rerun pending.
+- Next: push the fix, CI, flash, capture the REG lines. If boot4 is valid,
+  ATF ran and the failure is CPU4 entry/power; if boot4 is 0/3, ATF's bootaddr
+  write did not happen and cluster1 power-on is the target.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
