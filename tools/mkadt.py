@@ -129,25 +129,27 @@ def build(seed=None, qemu=False):
         # with CSR_ALLOW_UNRESTRICTED_FS (vm_unix.c shared region checks).
         node('asmb', [ph(), ('lp-sip0', u64(0x6f)), ('lp-sip1', u32(1))])])
 
-    # One homogeneous cluster: 8x A53 with MPIDR Aff1:Aff0 = 0x0:c
-    # (Aff0 only, so reg = core).
+    # MT6765: two A53 clusters of four. MPIDR is Aff1:Aff0: cluster 0
+    # is 0x000-0x003, cluster 1 is 0x100-0x103 (PSCI rejects 0x004+).
     cpu_nodes = []
     for core in range(1 if qemu else 8):
+        cluster = core // 4
+        aff0 = core % 4
         cpu_nodes.append(node(f'cpu{core}', [
             ph(),
             ('device_type', cstr('cpu')),
             ('compatible', cstr('arm,cortex-a53') + cstr('ARM,v8')),
-            ('reg', u32(core)),  # actual MPIDR Aff1:Aff0, NOT logical ID
+            ('reg', u32((cluster << 8) | aff0)),  # actual MPIDR Aff1:Aff0
             ('cpu-id', u32(core)),   # descriptive: XNU assigns IDs by DT order
-            ('cluster-id', u32(0)),  # descriptive; see ml_parse_cpu_topology
+            ('cluster-id', u32(cluster)),  # descriptive; see ml_parse_cpu_topology
             ('cluster-type', u32(0)),  # homogeneous CLUSTER_TYPE_SMP, not AMP
             ('die-cluster-id', u32(0)),
-            ('cluster-core-id', u32(core)),
+            ('cluster-core-id', u32(aff0)),
             ('l2-cache-id', u32(core)),  # distinct per-core L2 nodes in live FDT
             ('l3-cache-id', u32(0)),     # shared L3
             ('state', cstr('running' if core == 0 else 'stopped')),
             ('timebase-frequency', u32(timebase)),
-            ('clock-frequency', u32(2301000000)),
+            ('clock-frequency', u32(2301000000 if cluster == 0 else 1800000000)),
             ('bus-frequency', u32(100000000)),
             ('memory-frequency', u32(1866000000)),
             ('peripheral-frequency', u32(timebase)),
