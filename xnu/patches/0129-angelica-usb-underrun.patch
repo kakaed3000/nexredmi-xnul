@@ -1,0 +1,25 @@
+--- a/bsd/dev/angelica_usb.c
++++ b/bsd/dev/angelica_usb.c
+@@ -1173,12 +1173,18 @@
+ 	}
+ 	if (csr & MUSB_TXCSR_P_UNDERRUN) {
+ 		csr |= MUSB_TXCSR_P_WZC_BITS;
+-		csr &= ~MUSB_TXCSR_TXPKTRDY;
++		csr &= ~(MUSB_TXCSR_P_UNDERRUN | MUSB_TXCSR_TXPKTRDY);
+ 		ud_wr16(ud_epio(MUSB_TXCSR), csr);
+-		if (ud.tx_last_len) {
+-			ud.tx_off -= ud.tx_last_len;
++		if (ud.tx_off < ud.tx_len) {
++			ud_tx_send_packet();
++			return;
+ 		}
+-		ud_tx_send_packet();
++		if (ud.tx_need_zlp && !ud.tx_zlp_sent) {
++			ud_tx_send_packet();
++			return;
++		}
++		ud.tx_busy = false;
++		ud_tx_pump();
+ 		return;
+ 	}
+ 	if (csr & MUSB_TXCSR_TXPKTRDY) {
