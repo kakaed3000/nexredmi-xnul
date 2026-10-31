@@ -1,0 +1,163 @@
+--- a/iokit/Kernel/arm/AngelicaCPU.cpp
++++ b/iokit/Kernel/arm/AngelicaCPU.cpp
+@@ -38,6 +38,18 @@
+ static uint32_t angelica_top_after;
+ static uint32_t angelica_pwr_before;
+ static uint32_t angelica_pwr_after;
++static uint32_t angelica_entry_pa;
++static uint32_t angelica_entry_word;
++static uint32_t angelica_gicr_waker_before;
++static uint32_t angelica_gicr_waker_after;
++static uint32_t angelica_rgu_mode;
++static uint32_t angelica_rgu_status;
++static uint32_t angelica_rgu_swsysrst;
++static uint32_t angelica_rgu_dcm_before;
++static uint32_t angelica_rgu_dcm_after;
++static uint32_t angelica_mp1c0_before;
++static uint32_t angelica_mp1c0_after;
++static vm_offset_t angelica_gicr_base;
+ 
+ /*
+  * Stock ATF's SPMC tables describe MP0/MP1 boot addresses at 0x10200038 and
+@@ -52,6 +64,7 @@
+ static struct angelica_reg_page angelica_reg_pages[] = {
+ 	{ 0x10001000, 0 },
+ 	{ 0x10006000, 0 },
++	{ 0x10007000, 0 },
+ 	{ 0x10200000, 0 },
+ 	{ 0x10201000, 0 },
+ 	{ 0x10203000, 0 },
+@@ -132,6 +145,83 @@
+ 	angelica_prot_after = angelica_reg_read(0x10001258);
+ }
+ 
++/*
++ * A redistributor that is still asleep makes ATF's gic_pcpu_init spin before
++ * it ever returns to the non-secure entry point. Wake CPU4's redistributor
++ * from CPU0 and keep the WAKER values for the timeout panic.
++ */
++static void
++angelica_wake_gicr(uint32_t phys_id)
++{
++	if (angelica_gicr_base == 0) {
++		angelica_gicr_base = ml_io_map(0x0c100000, 0x200000);
++	}
++	if (angelica_gicr_base == 0) {
++		angelica_gicr_waker_before = 0xffffffffU;
++		angelica_gicr_waker_after = 0xffffffffU;
++		return;
++	}
++
++	vm_offset_t pe = 0;
++	for (vm_offset_t off = 0; off < 0x200000; off += 0x20000) {
++		vm_offset_t candidate = angelica_gicr_base + off;
++		uint64_t typer = *(volatile uint64_t *)(candidate + 0x08);
++		uint32_t aff = (uint32_t)(typer >> 32) & 0xffffU;
++		if (aff == (phys_id & 0xffffU)) {
++			pe = candidate;
++			break;
++		}
++		if (typer & 0x10U) {
++			break;
++		}
++	}
++	if (pe == 0) {
++		angelica_gicr_waker_before = 0xffffffffU;
++		angelica_gicr_waker_after = 0xffffffffU;
++		return;
++	}
++
++	angelica_gicr_waker_before = *(volatile uint32_t *)(pe + 0x14);
++	if (angelica_gicr_waker_before & 0x4U) {
++		*(volatile uint32_t *)(pe + 0x14) =
++		    angelica_gicr_waker_before & ~0x2U;
++		__builtin_arm_dsb(DSB_SY);
++		for (unsigned int i = 0; i < 1000; i++) {
++			if ((*(volatile uint32_t *)(pe + 0x14) & 0x4U) == 0) {
++				break;
++			}
++			IOSleep(1);
++		}
++	}
++	angelica_gicr_waker_after = *(volatile uint32_t *)(pe + 0x14);
++}
++
++/*
++ * MP1_RGU_DCM is on by default in Android. XNU never enables DCM, and the
++ * CPU4 PWR_CON still has ISO/CLK_DIS/SRAM_PDN set. Enable the RGU DCM and
++ * clear those power-down bits, then read back so the panic shows whether
++ * non-secure writes to MP1_CPU0_PWR_CON actually stick.
++ */
++static void
++angelica_prepare_cluster1_cpu(void)
++{
++	angelica_rgu_dcm_before = angelica_reg_read(0x10200288);
++	angelica_reg_write(0x10200288, angelica_rgu_dcm_before | 0x1U);
++	__builtin_arm_dsb(DSB_SY);
++	angelica_rgu_dcm_after = angelica_reg_read(0x10200288);
++
++	angelica_rgu_mode = angelica_reg_read(0x10007000);
++	angelica_rgu_status = angelica_reg_read(0x1000700c);
++	angelica_rgu_swsysrst = angelica_reg_read(0x10007018);
++
++	angelica_mp1c0_before = angelica_reg_read(0x1000621c);
++	uint32_t cpu = angelica_mp1c0_before & ~0x1b2U;
++	cpu |= 0x1040U;
++	angelica_reg_write(0x1000621c, cpu);
++	__builtin_arm_dsb(DSB_SY);
++	angelica_mp1c0_after = angelica_reg_read(0x1000621c);
++}
++
+ static void
+ angelica_log_smp_regs(unsigned int id, const char *when)
+ {
+@@ -309,7 +399,9 @@
+ 				panic("ANGELICA CPU: cpu=%u startup timeout init=%u sgi=%u trace=0x%llx trace_pa=0x%llx affinity=%d->%d\n"
+ 				    "ANGELICA REG pwr=%08x/%08x mp0top=%08x mp0c0=%08x mp1top=%08x mp1c0=%08x\n"
+ 				    "ANGELICA REG boot0=%08x boot4=%08x spark1=%08x bypass=%08x\n"
+-				    "ANGELICA REG cyc pwr=%08x->%08x top=%08x->%08x prot=%08x->%08x",
++				    "ANGELICA REG cyc pwr=%08x->%08x top=%08x->%08x prot=%08x->%08x\n"
++				    "ANGELICA REG entry=%08x word=%08x gicr=%08x->%08x\n"
++				    "ANGELICA REG rgu=%08x/%08x/%08x dcm=%08x->%08x cpu=%08x->%08x",
+ 				    i, __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
+ 				    angelica_cpu_signal_is_enabled(i), trace,
+ 				    angelica_trace_pa[i], angelica_affinity_before[i],
+@@ -321,7 +413,13 @@
+ 				    angelica_reg_read(0x10203c30), angelica_reg_read(0x100062b4),
+ 				    angelica_pwr_before, angelica_pwr_after,
+ 				    angelica_top_before, angelica_top_after,
+-				    angelica_prot_before, angelica_prot_after);
++				    angelica_prot_before, angelica_prot_after,
++				    angelica_entry_pa, angelica_entry_word,
++				    angelica_gicr_waker_before, angelica_gicr_waker_after,
++				    angelica_rgu_mode, angelica_rgu_status,
++				    angelica_rgu_swsysrst,
++				    angelica_rgu_dcm_before, angelica_rgu_dcm_after,
++				    angelica_mp1c0_before, angelica_mp1c0_after);
+ 			}
+ 			IOSleep(1);
+ 		}
+@@ -400,15 +498,21 @@
+ 	}
+ 	unsigned int id = getCPUNumber();
+ 	vm_offset_t entry = ml_static_vtop((vm_offset_t)&angelica_secondary_entry);
++	angelica_entry_pa = (uint32_t)entry;
++	vm_offset_t entry_map = ml_io_map(entry & ~0xfffULL, 0x1000);
++	angelica_entry_word = entry_map ?
++	    *(volatile uint32_t *)(entry_map + (entry & 0xfffU)) : 0;
+ 	angelica_trace[id] = 0xaa00 | id;
+ 	flush_dcache((vm_offset_t)&angelica_trace[id], 8, 0);
+ 	angelica_trace_pa[id] = ml_static_vtop((vm_offset_t)&angelica_trace[id]);
+ 	angelica_trace_slot_pa = angelica_trace_pa[id];
+ 	flush_dcache((vm_offset_t)&angelica_trace_slot_pa, 8, 0);
+-	IOLog("ANGELICA CPU: cpu=%u CPU_ON target=0x%x entry_pa=0x%llx trace_pa=0x%llx\n",
+-	    id, cpu->phys_id, (uint64_t)entry, angelica_trace_pa[id]);
++	IOLog("ANGELICA CPU: cpu=%u CPU_ON target=0x%x entry_pa=0x%llx word=%08x trace_pa=0x%llx\n",
++	    id, cpu->phys_id, (uint64_t)entry, angelica_entry_word, angelica_trace_pa[id]);
+ 	if (((cpu->phys_id >> 8) & 0xff) != 0) {
++		angelica_wake_gicr(cpu->phys_id);
+ 		angelica_cluster1_power_cycle();
++		angelica_prepare_cluster1_cpu();
+ 	}
+ 	__builtin_arm_dsb(DSB_SY);
+ 	angelica_log_smp_regs(id, "pre");

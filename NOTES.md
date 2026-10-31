@@ -115,7 +115,18 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
 - `0137-angelica-cluster1-power-cycle.patch` powers CPU4 and cluster1 down
   (`PWR_ON`/`PWR_ON_2ND` clear, wait for PWR_STATUS bits16/15 to clear) before
   CPU_ON, forcing ATF to take the cluster-off path and release bus protection
-  itself. Panic adds `cyc pwr/top/prot before->after`. Build/flash pending.
+  itself. Panic adds `cyc pwr/top/prot before->after`. Flashed; CPU4 still
+  times out with `init=0 sgi=0`, so the remaining prerequisites are checked by
+  0138.
+- `0138-angelica-cpu4-start-prereqs.patch` logs the physical entry and its
+  first instruction, wakes CPU4's GIC redistributor (`GICR_WAKER`), reads
+  TOP_RGU, enables `MP1_RGU_DCM` (`0x10200288`), and clears
+  ISO/CLK_DIS/SRAM_PDN in `MP1_CPU0_PWR_CON` with readback. Build/flash
+  pending.
+- `boot4=0x47d818d8` is ATF's `bl31_warm_entrypoint`, not XNU's
+  `angelica_secondary_entry` (PA `0x6142f000`). The non-secure entry is kept
+  in ATF's per-CPU `warmboot_ep_info`; comparing boot4 with the trampoline is
+  therefore not the right check.
 - If boot4 is valid, ATF ran and the failure is CPU4 entry/power; if boot4 is
   0/3, ATF's bootaddr write did not happen and cluster1 power-on is the target.
 
