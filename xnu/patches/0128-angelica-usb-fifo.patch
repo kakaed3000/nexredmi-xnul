@@ -1,0 +1,11 @@
+--- a/bsd/dev/angelica_usb.c
++++ b/bsd/dev/angelica_usb.c
+@@ -321,7 +321,7 @@
+ 	return 0x10 + off;
+ }
+ 
+-static inline uint32_t
++static inline uintptr_t
+ ud_fifo(uint8_t ep)
+ {
+ 	return ud.musb + 0x20 + (uint32_t)ep * 4;
