@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/arm/AngelicaCPU.cpp
 +++ b/iokit/Kernel/arm/AngelicaCPU.cpp
-@@ -20,13 +20,29 @@
+@@ -20,13 +20,31 @@
  
  extern "C" void angelica_secondary_entry(void);
  extern "C" boolean_t angelica_cpu_signal_is_enabled(unsigned int cpu);
@@ -12,6 +12,8 @@
  static uint32_t angelica_cpus_registered;
 +static volatile uint64_t angelica_trace[ANGELICA_SMP_MAX_CPUS];
 +static uint64_t angelica_trace_pa[ANGELICA_SMP_MAX_CPUS];
++static int32_t angelica_affinity_before[ANGELICA_SMP_MAX_CPUS];
++static int32_t angelica_affinity_after[ANGELICA_SMP_MAX_CPUS];
  
  /* SMCCC 1.0: x0 is the signed PSCI result; do not assume x1-x17 survive. */
  static int32_t
@@ -30,7 +32,7 @@
  angelica_psci_cpu_on(uint64_t target, uint64_t entry, uint64_t context)
  {
  	register uint64_t x0 __asm__("x0") = 0xC4000003ULL;
-@@ -157,13 +173,20 @@
+@@ -157,13 +175,21 @@
  			panic("ANGELICA CPU: cpu=%u processor_start failed: %d", i, kr);
  		}
  		/* processor_start() is asynchronous for secondaries in this XNU. */
@@ -48,14 +50,15 @@
 +				    i, topology->cpus[i].phys_id,
 +				    __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
 +				    angelica_cpu_signal_is_enabled(i), trace);
-+				panic("ANGELICA CPU: cpu=%u startup timeout init=%u sgi=%u trace=0x%llx trace_pa=0x%llx",
++				panic("ANGELICA CPU: cpu=%u startup timeout init=%u sgi=%u trace=0x%llx trace_pa=0x%llx affinity=%d->%d",
 +				    i, __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
 +				    angelica_cpu_signal_is_enabled(i), trace,
-+				    angelica_trace_pa[i]);
++				    angelica_trace_pa[i], angelica_affinity_before[i],
++				    angelica_affinity_after[i]);
  			}
  			IOSleep(1);
  		}
-@@ -240,12 +263,22 @@
+@@ -240,12 +266,21 @@
  	    __atomic_load_n(&initialized, __ATOMIC_ACQUIRE) != 0) {
  		panic("ANGELICA CPU: cpu=%u unsupported restart", getCPUNumber());
  	}
@@ -72,12 +75,12 @@
 +	    id, cpu->phys_id, (uint64_t)entry, angelica_trace_pa[id]);
  	__builtin_arm_dsb(DSB_SY);
 -	int32_t rc = angelica_psci_cpu_on(cpu->phys_id, entry, getCPUNumber());
+-	IOLog("ANGELICA CPU: cpu=%u PSCI CPU_ON rc=%d\n", getCPUNumber(), rc);
++	angelica_affinity_before[id] = angelica_psci_affinity_info(cpu->phys_id, 0);
 +	int32_t rc = angelica_psci_cpu_on(cpu->phys_id, entry, angelica_trace_pa[id]);
- 	IOLog("ANGELICA CPU: cpu=%u PSCI CPU_ON rc=%d\n", getCPUNumber(), rc);
-+	if (rc == 0) {
-+		int32_t state = angelica_psci_affinity_info(cpu->phys_id, 0);
-+		IOLog("ANGELICA CPU: cpu=%u PSCI AFFINITY_INFO=%d\n", id, state);
-+	}
++	angelica_affinity_after[id] = angelica_psci_affinity_info(cpu->phys_id, 0);
++	IOLog("ANGELICA CPU: cpu=%u PSCI CPU_ON rc=%d affinity %d->%d\n",
++	    id, rc, angelica_affinity_before[id], angelica_affinity_after[id]);
  	/* cpu_start() discards PE_cpu_start's return; do not silently carry on. */
  	if (rc != 0) {
  		panic("ANGELICA CPU: cpu=%u NOT alive: PSCI CPU_ON rc=%d", getCPUNumber(), rc);
@@ -129,7 +132,7 @@
  	.text
  
  
-@@ -288,8 +311,24 @@
+@@ -288,8 +311,28 @@
  	.align 2
  	.globl EXT(angelica_secondary_entry)
  LEXT(angelica_secondary_entry)
@@ -143,6 +146,8 @@
 +	cbz		x0, 1f
 +	mov		x9, #1
 +	str		x9, [x0]
++	dc		civac, x0
++	dsb		sy
 +	mov		x28, x0
 +1:
  	msr		DAIFSet, #0xf
@@ -150,17 +155,21 @@
 +	cbz		x28, 2f
 +	mov		x9, #2
 +	str		x9, [x28]
++	dc		civac, x28
++	dsb		sy
 +2:
  	cmp		x1, #0x4
  	b.eq	Langelica_secondary_el1
  	cmp		x1, #0x8
-@@ -322,10 +361,22 @@
+@@ -322,10 +365,28 @@
  	msr		SPSR_EL2, x1
  	eret
  Langelica_secondary_bad_el:
 +	cbz		x28, 1f
 +	mov		x9, #0xbad
 +	str		x9, [x28]
++	dc		civac, x28
++	dsb		sy
 +1:
  	b		.
  Langelica_secondary_el1:
@@ -168,11 +177,15 @@
 +	cbz		x28, 1f
 +	mov		x9, #3
 +	str		x9, [x28]
++	dc		civac, x28
++	dsb		sy
 +1:
  	msr		SPSel, #1
 +	cbz		x28, 2f
 +	mov		x9, #4
 +	str		x9, [x28]
++	dc		civac, x28
++	dsb		sy
 +2:
  	b		EXT(LowResetVectorBase)
  #endif /* ANGELICA */
