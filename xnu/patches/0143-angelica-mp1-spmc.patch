@@ -1,0 +1,103 @@
+--- a/iokit/Kernel/arm/AngelicaCPU.cpp
++++ b/iokit/Kernel/arm/AngelicaCPU.cpp
+@@ -58,6 +58,18 @@
+ static uint32_t angelica_mp1_l2_sleep_after;
+ static uint32_t angelica_ptpod2_before;
+ static uint32_t angelica_ptpod2_after;
++static uint32_t angelica_mp0_spmc;
++static uint32_t angelica_mp1_spmc_before;
++static uint32_t angelica_mp1_spmc_after;
++static uint32_t angelica_cpusys0_cpu1_spmc;
++static uint32_t angelica_cpusys1_ctl_before;
++static uint32_t angelica_cpusys1_ctl_after;
++static uint32_t angelica_cpusys1_sparken_before;
++static uint32_t angelica_cpusys1_sparken_after;
++static uint32_t angelica_cpusys1_vret_before;
++static uint32_t angelica_cpusys1_vret_after;
++static uint32_t angelica_cpusys1_amux_before;
++static uint32_t angelica_cpusys1_amux_after;
+ static vm_offset_t angelica_gicr_base;
+ 
+ /*
+@@ -245,6 +257,43 @@
+ 	angelica_mp1c0_after = angelica_reg_read(0x1000621c);
+ 
+ 	/*
++	 * ATF's SPMC tables leave MP1_CPUTOP_SPMC_CTL in the cluster-off
++	 * state (ISO/CLK_DIS/CKISO/HOT_PLUG_RESET), unlike MP0. Use MP0's
++	 * control bits as the on template and leave the ACK bits alone.
++	 */
++	angelica_mp0_spmc = angelica_reg_read(0x10200788);
++	angelica_mp1_spmc_before = angelica_reg_read(0x1020078c);
++	uint32_t spmc = angelica_mp1_spmc_before;
++	spmc &= ~((1U << 6) | (1U << 14) | (1U << 15) | (1U << 22));
++	spmc |= (angelica_mp0_spmc & ((1U << 0) | (1U << 1) | (1U << 3) |
++	    (1U << 4) | (1U << 5) | (1U << 13)));
++	angelica_reg_write(0x1020078c, spmc);
++	__builtin_arm_dsb(DSB_SY);
++	angelica_mp1_spmc_after = angelica_reg_read(0x1020078c);
++
++	/*
++	 * CPUSYS1 SPMC is also left at zero. CPU1 on cluster0 is a known-good
++	 * secondary-core template; clear isolation/clock/power-down and enable
++	 * SPARK before CPU_ON so CPU4 has a running clock.
++	 */
++	angelica_cpusys1_vret_before = angelica_reg_read(0x10203c00);
++	angelica_cpusys1_sparken_before = angelica_reg_read(0x10203c04);
++	angelica_cpusys1_amux_before = angelica_reg_read(0x10203c08);
++	angelica_cpusys0_cpu1_spmc = angelica_reg_read(0x10201c34);
++	angelica_cpusys1_ctl_before = angelica_reg_read(0x10203c30);
++
++	uint32_t ctl = angelica_cpusys0_cpu1_spmc & 0x0007ffffU;
++	ctl &= ~((1U << 6) | (1U << 9) | (1U << 10) | (0x1fU << 11) |
++	    (1U << 16));
++	ctl |= (1U << 0) | (1U << 1) | (1U << 7) | (1U << 8);
++	angelica_reg_write(0x10203c30, ctl);
++	__builtin_arm_dsb(DSB_SY);
++	angelica_cpusys1_ctl_after = angelica_reg_read(0x10203c30);
++	angelica_cpusys1_sparken_after = angelica_reg_read(0x10203c04);
++	angelica_cpusys1_vret_after = angelica_reg_read(0x10203c00);
++	angelica_cpusys1_amux_after = angelica_reg_read(0x10203c08);
++
++	/*
+ 	 * The cluster L2 SRAM has separate power controls at 0x10006258/25c.
+ 	 * ATF's CPU/cluster power-on path does not touch them; release L2
+ 	 * retention before CPU_ON and keep both values for the timeout panic.
+@@ -279,6 +328,10 @@
+ 	    angelica_reg_read(0x10201c30), angelica_reg_read(0x10203c30),
+ 	    angelica_reg_read(0x10201638), angelica_reg_read(0x10203638),
+ 	    angelica_reg_read(0x10226000));
++	IOLog("ANGELICA REG %s cpu=%u mp0spmc=%08x mp1spmc=%08x c1ctl=%08x c1en=%08x c1vret=%08x c1amux=%08x\n",
++	    when, id, angelica_reg_read(0x10200788), angelica_reg_read(0x1020078c),
++	    angelica_reg_read(0x10203c30), angelica_reg_read(0x10203c04),
++	    angelica_reg_read(0x10203c00), angelica_reg_read(0x10203c08));
+ }
+ 
+ /* SMCCC 1.0: x0 is the signed PSCI result; do not assume x1-x17 survive. */
+@@ -446,7 +499,9 @@
+ 				    "ANGELICA REG entry=%08x word=%08x gicr=%08x->%08x typer=%llx\n"
+ 				    "ANGELICA REG top1=%08x->%08x rgu=%08x/%08x/%08x dcm=%08x->%08x cpu=%08x->%08x\n"
+ 				    "ANGELICA REG l2sleep=%08x->%08x l2pdn=%08x->%08x ptpod2=%08x->%08x wfi=%08x\n"
+-				    "ANGELICA REG spmc=%08x/%08x/%08x arch=%08x/%08x",
++				    "ANGELICA REG spmc=%08x/%08x/%08x arch=%08x/%08x\n"
++				    "ANGELICA REG mp1spmc=%08x->%08x mp0spmc=%08x cpu1spmc=%08x c1ctl=%08x->%08x\n"
++				    "ANGELICA REG c1en=%08x->%08x c1vret=%08x->%08x c1amux=%08x->%08x mp1sram=%08x",
+ 				    i, __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
+ 				    angelica_cpu_signal_is_enabled(i), trace,
+ 				    angelica_trace_pa[i], angelica_affinity_before[i],
+@@ -474,7 +529,14 @@
+ 				    angelica_reg_read(0x10006540),
+ 				    angelica_reg_read(0x10200788), angelica_reg_read(0x1020078c),
+ 				    angelica_reg_read(0x10200790),
+-				    angelica_reg_read(0x1020003c), angelica_reg_read(0x1020023c));
++				    angelica_reg_read(0x1020003c), angelica_reg_read(0x1020023c),
++				    angelica_mp1_spmc_before, angelica_mp1_spmc_after,
++				    angelica_mp0_spmc, angelica_cpusys0_cpu1_spmc,
++				    angelica_cpusys1_ctl_before, angelica_cpusys1_ctl_after,
++				    angelica_cpusys1_sparken_before, angelica_cpusys1_sparken_after,
++				    angelica_cpusys1_vret_before, angelica_cpusys1_vret_after,
++				    angelica_cpusys1_amux_before, angelica_cpusys1_amux_after,
++				    angelica_reg_read(0x10200790));
+ 			}
+ 			IOSleep(1);
+ 		}
