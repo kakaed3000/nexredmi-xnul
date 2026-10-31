@@ -1,0 +1,81 @@
+--- a/iokit/Kernel/arm/AngelicaCPU.cpp
++++ b/iokit/Kernel/arm/AngelicaCPU.cpp
+@@ -52,6 +52,12 @@
+ static uint32_t angelica_rgu_dcm_after;
+ static uint32_t angelica_mp1c0_before;
+ static uint32_t angelica_mp1c0_after;
++static uint32_t angelica_mp1_l2_pdn_before;
++static uint32_t angelica_mp1_l2_pdn_after;
++static uint32_t angelica_mp1_l2_sleep_before;
++static uint32_t angelica_mp1_l2_sleep_after;
++static uint32_t angelica_ptpod2_before;
++static uint32_t angelica_ptpod2_after;
+ static vm_offset_t angelica_gicr_base;
+ 
+ /*
+@@ -237,6 +243,24 @@
+ 	angelica_reg_write(0x1000621c, cpu);
+ 	__builtin_arm_dsb(DSB_SY);
+ 	angelica_mp1c0_after = angelica_reg_read(0x1000621c);
++
++	/*
++	 * The cluster L2 SRAM has separate power controls at 0x10006258/25c.
++	 * ATF's CPU/cluster power-on path does not touch them; release L2
++	 * retention before CPU_ON and keep both values for the timeout panic.
++	 */
++	angelica_mp1_l2_sleep_before = angelica_reg_read(0x1000625c);
++	angelica_reg_write(0x1000625c, angelica_mp1_l2_sleep_before | 0x1U);
++	angelica_mp1_l2_pdn_before = angelica_reg_read(0x10006258);
++	angelica_reg_write(0x10006258, angelica_mp1_l2_pdn_before & ~0x1U);
++	__builtin_arm_dsb(DSB_SY);
++	angelica_mp1_l2_sleep_after = angelica_reg_read(0x1000625c);
++	angelica_mp1_l2_pdn_after = angelica_reg_read(0x10006258);
++
++	angelica_ptpod2_before = angelica_reg_read(0x10006560);
++	angelica_reg_write(0x10006560, angelica_ptpod2_before | 0x8U);
++	__builtin_arm_dsb(DSB_SY);
++	angelica_ptpod2_after = angelica_reg_read(0x10006560);
+ }
+ 
+ static void
+@@ -417,10 +441,12 @@
+ 				    topology->cpus[i].phys_id, 0);
+ 				panic("ANGELICA CPU: cpu=%u startup timeout init=%u sgi=%u trace=0x%llx trace_pa=0x%llx affinity=%d->%d now=%d\n"
+ 				    "ANGELICA REG pwr=%08x/%08x mp0top=%08x mp0c0=%08x mp1top=%08x mp1c0=%08x\n"
+-				    "ANGELICA REG boot0=%08x boot4=%08x spark1=%08x bypass=%08x\n"
++				    "ANGELICA REG boot0=%08x boot4=%08x spark0=%08x spark1=%08x bypass=%08x\n"
+ 				    "ANGELICA REG cyc pwr=%08x->%08x top=%08x->%08x prot=%08x->%08x\n"
+ 				    "ANGELICA REG entry=%08x word=%08x gicr=%08x->%08x typer=%llx\n"
+-				    "ANGELICA REG top1=%08x->%08x rgu=%08x/%08x/%08x dcm=%08x->%08x cpu=%08x->%08x",
++				    "ANGELICA REG top1=%08x->%08x rgu=%08x/%08x/%08x dcm=%08x->%08x cpu=%08x->%08x\n"
++				    "ANGELICA REG l2sleep=%08x->%08x l2pdn=%08x->%08x ptpod2=%08x->%08x wfi=%08x\n"
++				    "ANGELICA REG spmc=%08x/%08x/%08x arch=%08x/%08x",
+ 				    i, __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
+ 				    angelica_cpu_signal_is_enabled(i), trace,
+ 				    angelica_trace_pa[i], angelica_affinity_before[i],
+@@ -429,7 +455,8 @@
+ 				    angelica_reg_read(0x10006204), angelica_reg_read(0x10006208),
+ 				    angelica_reg_read(0x10006218), angelica_reg_read(0x1000621c),
+ 				    angelica_reg_read(0x10200038), angelica_reg_read(0x10200238),
+-				    angelica_reg_read(0x10203c30), angelica_reg_read(0x100062b4),
++				    angelica_reg_read(0x10201c30), angelica_reg_read(0x10203c30),
++				    angelica_reg_read(0x100062b4),
+ 				    angelica_pwr_before, angelica_pwr_after,
+ 				    angelica_top_before, angelica_top_after,
+ 				    angelica_prot_before, angelica_prot_after,
+@@ -440,7 +467,14 @@
+ 				    angelica_rgu_mode, angelica_rgu_status,
+ 				    angelica_rgu_swsysrst,
+ 				    angelica_rgu_dcm_before, angelica_rgu_dcm_after,
+-				    angelica_mp1c0_before, angelica_mp1c0_after);
++				    angelica_mp1c0_before, angelica_mp1c0_after,
++				    angelica_mp1_l2_sleep_before, angelica_mp1_l2_sleep_after,
++				    angelica_mp1_l2_pdn_before, angelica_mp1_l2_pdn_after,
++				    angelica_ptpod2_before, angelica_ptpod2_after,
++				    angelica_reg_read(0x10006540),
++				    angelica_reg_read(0x10200788), angelica_reg_read(0x1020078c),
++				    angelica_reg_read(0x10200790),
++				    angelica_reg_read(0x1020003c), angelica_reg_read(0x1020023c));
+ 			}
+ 			IOSleep(1);
+ 		}

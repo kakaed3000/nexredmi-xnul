@@ -134,7 +134,23 @@ LK -> boot.img, and its storage is eMMC behind MSDC, not UFS.
 - `0140-angelica-cpu4-reset-pulse.patch` also clears CPU4 `PWR_RST_B`
   during the power cycle and reports `AFFINITY_INFO` again at timeout
   (`affinity=... now=...`) to distinguish an ATF hang from an NS entry
-  failure. Build/flash pending.
+  failure. Flashed: CPU4 still times out with `now=2`, so ATF never reaches
+  `psci_cpu_on_finish` even after the reset pulse, MP1 SRAM cleanup and GICR
+  wake.
+- `0141-angelica-cluster-l2-spmc.patch` targets the remaining power controls
+  that ATF's CPU/cluster path does not touch: clears
+  `MP1_CPUTOP_L2_PDN` (`0x10006258` bit0), sets
+  `MP1_CPUTOP_L2_SLEEP_B` (`0x1000625c` bit0), and sets
+  `CPU_PTPOD2_CON` MP1 SPARK enable (`0x10006560` bit3). The timeout panic
+  now also carries `spark0`, L2 before/after, PTPOD2, `MP1_CPU0_WFI_EN`
+  (`0x10006540`), `MP0/MP1_CPUTOP_SPMC_CTL` (`0x10200788/78c`),
+  `MP1_CPUTOP_SPMC_SRAM_CTL` (`0x10200790`), and the MP0/MP1
+  `MISC_CONFIG3` archstate registers (`0x1020003c/1020023c`).
+- ATF `mcucfg.h` identifies `0x10203c30` as
+  `CPUSYS1_CPU0_SPMC_CTL` (the old `spark1` panic value) and `0x10201c30`
+  as `CPUSYS0_CPU0_SPMC_CTL`; 0141 logs both so CPU0/CPU4 SPARK state can be
+  compared. The cluster's L2 power controls are separate and were never
+  programmed by XNU before 0141.
 - `boot4=0x47d818d8` is ATF's `bl31_warm_entrypoint`, not XNU's
   `angelica_secondary_entry` (PA `0x6142f000`). The non-secure entry is kept
   in ATF's per-CPU `warmboot_ep_info`; comparing boot4 with the trampoline is
