@@ -8,10 +8,19 @@
  extern "C" void flush_dcache(vm_offset_t addr, unsigned length, int phys);
  extern "C" uint64_t angelica_trace_slot_pa;
  extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-@@ -234,6 +235,21 @@
- }
+@@ -314,10 +315,29 @@
+ 	void haltCPU(void) APPLE_KEXT_OVERRIDE;
+ 	void signalCPU(IOCPU *target) APPLE_KEXT_OVERRIDE;
+ 	const OSSymbol *getCPUName(void) APPLE_KEXT_OVERRIDE;
++	uint32_t getInitialized(void)
++	{
++		return __atomic_load_n(&initialized, __ATOMIC_ACQUIRE);
++	}
+ };
  
- static void
+ OSDefineMetaClassAndStructors(AngelicaCPU, IOCPU);
+ 
++static void
 +angelica_log_cpu_states(const char *when)
 +{
 +	const ml_topology_info_t *topology = ml_get_topology_info();
@@ -20,17 +29,16 @@
 +		AngelicaCPU *cpu = __atomic_load_n(&angelica_cpus[i], __ATOMIC_ACQUIRE);
 +		IOLog("ANGELICA CPUSTATE %s cpu=%u mpidr=0x%x init=%u sgi=%u affinity=%d\n",
 +		    when, i, topology->cpus[i].phys_id,
-+		    cpu ? __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE) : 0,
++		    cpu ? cpu->getInitialized() : 0,
 +		    angelica_cpu_signal_is_enabled(i),
 +		    angelica_psci_affinity_info(topology->cpus[i].phys_id, 0));
 +	}
 +}
 +
-+static void
- angelica_log_smp_regs(unsigned int id, const char *when)
+ bool
+ AngelicaCPU::start(IOService *provider)
  {
- 	IOLog("ANGELICA REG %s cpu=%u pwr=%08x/%08x cpupwr=%08x/%08x cfg=%08x\n",
-@@ -525,10 +541,17 @@
+@@ -525,10 +545,17 @@
  {
  	const ml_topology_info_t *topology = ml_get_topology_info();
  	uint32_t first = (uint32_t)(uintptr_t)arg;
@@ -50,7 +58,7 @@
  	for (uint32_t i = first; i < topology->num_cpus; i++) {
  		AngelicaCPU *cpu = __atomic_load_n(&angelica_cpus[i], __ATOMIC_ACQUIRE);
  		if (cpu == NULL) {
-@@ -561,6 +584,7 @@
+@@ -561,6 +588,7 @@
  			    i, __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE),
  			    angelica_cpu_signal_is_enabled(i), angelica_trace[i]);
  			angelica_log_smp_regs(i, "late-timeout");
@@ -58,7 +66,7 @@
  			IOLog("ANGELICA REG late-timeout cpu=%u prot=%08x sipdown=%d affinity=%d c1ctl=%08x mp1spmc=%08x arch0=%08x arch1=%08x\n",
  			    i, angelica_reg_read(0x10001258),
  			    angelica_sip_power_down_rc,
-@@ -573,6 +597,7 @@
+@@ -573,6 +601,7 @@
  		}
  		IOLog("ANGELICA CPU: late cpu=%u came alive; SGI1 OK\n", i);
  	}
