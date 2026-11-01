@@ -1,0 +1,15 @@
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -817,6 +817,12 @@
+ 	uint64_t const *reg;
+ 	uint32_t const *val;
+ 	unsigned int size;
++	uint32_t on = 1;
++
++	/* Keep the clean early framebuffer console for panic capture. */
++	if (PE_parse_boot_argn("angelicafbcon", &on, sizeof(on)) && on == 0) {
++		return;
++	}
+ 
+ 	if (SecureDTFindEntry("name", "angelica-fbcon", &entry) != kSuccess ||
+ 	    SecureDTGetProperty(entry, "reg", (void const **)&reg, &size) != kSuccess || size < 16) {
