@@ -1,0 +1,19 @@
+--- a/osfmk/arm/pmap/pmap.h
++++ b/osfmk/arm/pmap/pmap.h
+@@ -112,7 +112,15 @@
+  */
+ #define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 34)
+ #else /* defined(ARM_LARGE_MEMORY) */
+-#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 8)
++/*
++ * The classic non-large layout still bootstrap-maps every GB of managed RAM
++ * twice (V=P and KVA): one L1 page plus one L2 page per GB.  Eight pages only
++ * cover a 2GB device; on angelica's 3.5GB managed range the extra L2 pages
++ * scribble over topology_info, which follows bootstrap_pagetables in the
++ * kernel image, producing "topology_info.boot_cpu == NULL".  Use the same
++ * 34-page budget as the large-memory layout so 4GB devices fit.
++ */
++#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 34)
+ #endif /* defined(ARM_LARGE_MEMORY) */
+ 
+ typedef uint64_t tt_entry_t; /* translation table entry type */
