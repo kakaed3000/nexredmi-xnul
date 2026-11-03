@@ -1,5 +1,5 @@
---- /tmp/opencode/0152-base/bsd/dev/angelica_msdc.c	2026-11-03 18:43:46.757024273 +0500
-+++ bsd/dev/angelica_msdc.c	2026-11-03 19:05:06.299972985 +0500
+--- a/bsd/dev/angelica_msdc.c
++++ b/bsd/dev/angelica_msdc.c
 @@ -122,6 +122,7 @@
  static volatile uint64_t msdc_lock_start;
  static int msdc_watchdog_chan;
