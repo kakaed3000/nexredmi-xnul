@@ -1,0 +1,176 @@
+--- a/bsd/dev/angelica_msdc.c
++++ b/bsd/dev/angelica_msdc.c
+@@ -19,6 +19,7 @@
+ #include <sys/uio.h>
+ #include <miscfs/devfs/devfs.h>
+ #include <kern/locks.h>
++#include <kern/thread.h>
+ #include <kern/clock.h>
+ #include <machine/machine_routines.h>
+ #include <vm/pmap.h>
+@@ -110,6 +111,11 @@
+ static LCK_GRP_DECLARE(angelica_msdc_grp, "angelica_msdc");
+ static LCK_MTX_DECLARE(angelica_msdc_lock, &angelica_msdc_grp);
+ 
++static volatile int msdc_owner_tid;
++static volatile int msdc_owner_pid;
++static volatile int msdc_reported_tid;
++static const char *msdc_reported_stage;
++
+ static inline uint32_t
+ msdc_rd(uint32_t off)
+ {
+@@ -130,6 +136,46 @@
+ 	return d + mach_absolute_time();
+ }
+ 
++static void
++msdc_lock_busy(void)
++{
++	int tid = msdc_owner_tid;
++	int pid = msdc_owner_pid;
++
++	if (tid == 0 ||
++	    (tid == msdc_reported_tid && sm.last_stage == msdc_reported_stage)) {
++		return;
++	}
++	msdc_reported_tid = tid;
++	msdc_reported_stage = sm.last_stage;
++	kprintf("ANGELICA MSDC: lock busy holder t%d pid %d stage %s "
++	    "cfg=0x%x sdc_cfg=0x%x sts=0x%x fifo=0x%x int=0x%x dma=0x%x\n",
++	    tid, pid, sm.last_stage ? sm.last_stage : "none",
++	    msdc_rd(MSDC_CFG), msdc_rd(SDC_CFG), msdc_rd(SDC_STS),
++	    msdc_rd(MSDC_FIFOCS), msdc_rd(MSDC_INT), msdc_rd(MSDC_DMA_CFG));
++}
++
++static void
++msdc_lock_acquire(void)
++{
++	proc_t p = current_proc();
++
++	if (!lck_mtx_try_lock(&angelica_msdc_lock)) {
++		msdc_lock_busy();
++		lck_mtx_lock(&angelica_msdc_lock);
++	}
++	msdc_owner_tid = (int)thread_tid(current_thread());
++	msdc_owner_pid = p != NULL ? proc_pid(p) : 0;
++}
++
++static void
++msdc_lock_release(void)
++{
++	msdc_owner_tid = 0;
++	msdc_owner_pid = 0;
++	lck_mtx_unlock(&angelica_msdc_lock);
++}
++
+ /*
+  * One command in polled mode. dtype: 0 = none, 1 = single block, 2 = multi.
+  * Returns 0 or an errno; R1 response in *resp.
+@@ -143,6 +189,7 @@
+ 	uint32_t rawcmd = opcode | (rsptyp << 7) | (MSDC_BLOCK << 16) | (dtype << 11);
+ 
+ 	while (msdc_rd(SDC_STS) & SDC_STS_SDCBUSY) {
++		sm.last_stage = "cmd-busy";
+ 		if (mach_absolute_time() > deadline) {
+ 			sm.last_stage = "busy";
+ 			kprintf("ANGELICA MSDC: CMD%u busy timeout sts=0x%x cfg=0x%x\n",
+@@ -156,6 +203,7 @@
+ 	msdc_wr(SDC_ARG, arg);
+ 	msdc_wr(SDC_CMD, rawcmd);
+ 
++	sm.last_stage = "cmd-irq";
+ 	for (;;) {
+ 		ints = msdc_rd(MSDC_INT) & MSDC_INT_CMDMASK;
+ 		if (ints) {
+@@ -178,6 +226,7 @@
+ 	if (resp) {
+ 		*resp = msdc_rd(SDC_RESP0);
+ 	}
++	sm.last_stage = "cmd-done";
+ 	return 0;
+ }
+ 
+@@ -200,7 +249,9 @@
+ 	uint32_t cfg, ctrl, ints;
+ 	int error;
+ 
++	sm.last_stage = "sector-start";
+ 	msdc_dma_stop();
++	sm.last_stage = "dma-stop";
+ 	msdc_wr(MSDC_DMA_CFG, 0);
+ 	msdc_wr(MSDC_FIFOCS, MSDC_FIFOCS_CLR);
+ 	for (uint32_t i = 0; (msdc_rd(MSDC_FIFOCS) & MSDC_FIFOCS_CLR) && i < 100; i++) {
+@@ -212,6 +263,7 @@
+ 	msdc_wr(MSDC_CFG, cfg & ~MSDC_CFG_PIO);
+ 	msdc_wr(SDC_BLK_NUM, 1);
+ 
++	sm.last_stage = "cmd";
+ 	error = msdc_cmd(17, (uint32_t)lba, 1, 1, &resp);
+ 	if (error) {
+ 		goto out;
+@@ -237,6 +289,7 @@
+ 	msdc_wr(MSDC_DMA_CTRL, ctrl);
+ 	msdc_wr(MSDC_DMA_CTRL, ctrl | MSDC_DMA_CTRL_START);
+ 
++	sm.last_stage = "data-dma";
+ 	for (;;) {
+ 		ints = msdc_rd(MSDC_INT) & MSDC_INT_DATAMASK;
+ 		if (ints) {
+@@ -264,6 +317,7 @@
+ 		delay(1);
+ 	}
+ 
++	sm.last_stage = "dma-stop2";
+ 	msdc_dma_stop();
+ 	msdc_wr(MSDC_INT, MSDC_INT_DATAMASK);
+ 	if (error == 0) {
+@@ -505,21 +559,25 @@
+ 		goto done;
+ 	}
+ 
+-	lck_mtx_lock(&angelica_msdc_lock);
+ 	for (uint32_t done = 0; done < count;) {
+ 		uint64_t pos = off + done;
+ 		uint32_t in = (uint32_t)(pos % MSDC_BLOCK);
+ 		uint32_t want = MIN(count - done, MSDC_BLOCK - in);
+ 
++		msdc_lock_acquire();
++		sm.last_stage = "strategy";
+ 		error = msdc_read_sector(sm.first_block + pos / MSDC_BLOCK);
++		if (error == 0) {
++			sm.last_stage = "copy";
++			memcpy(vaddr + done, sm.sector + in, want);
++		}
++		msdc_lock_release();
+ 		if (error) {
+ 			break;
+ 		}
+-		memcpy(vaddr + done, sm.sector + in, want);
+ 		done += want;
+ 		buf_setresid(bp, count - done);
+ 	}
+-	lck_mtx_unlock(&angelica_msdc_lock);
+ 	buf_unmap(bp);
+ 
+ done:
+@@ -668,8 +726,8 @@
+ 	sm.secsize = DEV_BSIZE;
+ 
+ 	kprintf("ANGELICA MSDC: locking\n");
+-	lck_mtx_lock(&angelica_msdc_lock);
+-	kprintf("ANGELICA MSDC: locked\n");
++	msdc_lock_acquire();
++	kprintf("ANGELICA MSDC: locked t%d pid %d\n", msdc_owner_tid, msdc_owner_pid);
+ 	msdc_wr(MSDC_INTEN, 0);                 /* polled operation */
+ 	error = msdc_prepare_card();
+ 	kprintf("ANGELICA MSDC: prepare returned %d\n", error);
+@@ -684,7 +742,7 @@
+ 	kprintf("ANGELICA MSDC: regs %p cfg=0x%x sdc_cfg=0x%x sts=0x%x fifo=0x%x int=0x%x\n",
+ 	    (void *)sm.regs, msdc_rd(MSDC_CFG), msdc_rd(SDC_CFG),
+ 	    msdc_rd(SDC_STS), msdc_rd(MSDC_FIFOCS), msdc_rd(MSDC_INT));
+-	lck_mtx_unlock(&angelica_msdc_lock);
++	msdc_lock_release();
+ 	if (error) {
+ 		panic("ANGELICA MSDC: init failed err=%d stage=%s cfg=0x%x sdc_cfg=0x%x sts=0x%x fifo=0x%x int=0x%x",
+ 		    error, sm.last_stage ? sm.last_stage : "none", msdc_rd(MSDC_CFG),
