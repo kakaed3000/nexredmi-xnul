@@ -1,0 +1,102 @@
+--- a/bsd/dev/angelica_msdc.c
++++ b/bsd/dev/angelica_msdc.c
+@@ -122,6 +122,7 @@
+ static volatile uint64_t msdc_lock_start;
+ static int msdc_watchdog_chan;
+ static int msdc_watchdog_reported_tid;
++static int msdc_watchdog_tick;
+ static const char *msdc_watchdog_stage;
+ 
+ extern kern_return_t kernel_thread_start(thread_continue_t, void *, thread_t *);
+@@ -147,14 +148,23 @@
+ 	return d + mach_absolute_time();
+ }
+ 
++static ctid_t
++msdc_lock_owner_ctid(void)
++{
++	return (ctid_t)(angelica_msdc_lock.lck_mtx.data & LCK_MTX_CTID_MASK);
++}
++
+ /*
+- * Print a stuck sector read even when no second thread is waiting on the
+- * lock.  This is what identifies a holder that spins in delay() forever.
++ * Print a held lock even when no second thread is waiting on it.  The owner
++ * is decoded from the mutex itself; msdc_owner_tid may be zero if the holder
++ * was preempted before recording itself.
+  */
+ static void
+ msdc_watchdog_thread(void *arg, wait_result_t wr)
+ {
+-	uint64_t threshold, now, start;
++	uint64_t threshold, now, start, otid = 0;
++	ctid_t owner;
++	thread_t ot;
+ 	int tid, pid;
+ 
+ 	(void)arg;
+@@ -163,9 +173,17 @@
+ 
+ 	for (;;) {
+ 		tsleep(&msdc_watchdog_chan, PZERO, "msdcwd", 10 * hz);
++		if (msdc_watchdog_tick++ == 0) {
++			kprintf("ANGELICA MSDC: watchdog alive\n");
++		}
+ 		now = mach_absolute_time();
+-		if (msdc_owner_tid != 0) {
+-			tid = msdc_owner_tid;
++		owner = msdc_lock_owner_ctid();
++		ot = owner != 0 ? ctid_get_thread_unsafe(owner) : THREAD_NULL;
++		if (ot != THREAD_NULL) {
++			otid = thread_tid(ot);
++		}
++		if (owner != 0) {
++			tid = (int)owner;
+ 			pid = msdc_owner_pid;
+ 			start = msdc_lock_start;
+ 		} else {
+@@ -181,11 +199,14 @@
+ 		}
+ 		msdc_watchdog_reported_tid = tid;
+ 		msdc_watchdog_stage = sm.last_stage;
+-		kprintf("ANGELICA MSDC: lock held t%d pid %d stage %s "
+-		    "start 0x%llx now 0x%llx io t%d pid %d lba 0x%llx "
++		kprintf("ANGELICA MSDC: lock held ctid %d tid %llu pid %d "
++		    "stage %s start 0x%llx now 0x%llx gtid %d gpid %d "
++		    "io t%d pid %d lba 0x%llx "
+ 		    "cfg=0x%x sdc_cfg=0x%x sts=0x%x fifo=0x%x int=0x%x dma=0x%x\n",
+-		    tid, pid, sm.last_stage ? sm.last_stage : "none",
++		    (int)owner, (unsigned long long)otid, pid,
++		    sm.last_stage ? sm.last_stage : "none",
+ 		    (unsigned long long)start, (unsigned long long)now,
++		    msdc_owner_tid, msdc_owner_pid,
+ 		    msdc_io_tid, msdc_io_pid, (unsigned long long)msdc_io_lba,
+ 		    msdc_rd(MSDC_CFG), msdc_rd(SDC_CFG), msdc_rd(SDC_STS),
+ 		    msdc_rd(MSDC_FIFOCS), msdc_rd(MSDC_INT), msdc_rd(MSDC_DMA_CFG));
+@@ -195,7 +216,10 @@
+ static void
+ msdc_lock_busy(void)
+ {
+-	int tid = msdc_owner_tid;
++	ctid_t owner = msdc_lock_owner_ctid();
++	thread_t ot = owner != 0 ? ctid_get_thread_unsafe(owner) : THREAD_NULL;
++	uint64_t otid = ot != THREAD_NULL ? thread_tid(ot) : 0;
++	int tid = owner != 0 ? (int)owner : msdc_owner_tid;
+ 	int pid = msdc_owner_pid;
+ 
+ 	if (tid == 0 ||
+@@ -204,9 +228,12 @@
+ 	}
+ 	msdc_reported_tid = tid;
+ 	msdc_reported_stage = sm.last_stage;
+-	kprintf("ANGELICA MSDC: lock busy holder t%d pid %d stage %s "
++	kprintf("ANGELICA MSDC: lock busy holder ctid %d tid %llu pid %d "
++	    "stage %s gtid %d gpid %d "
+ 	    "cfg=0x%x sdc_cfg=0x%x sts=0x%x fifo=0x%x int=0x%x dma=0x%x\n",
+-	    tid, pid, sm.last_stage ? sm.last_stage : "none",
++	    (int)owner, (unsigned long long)otid, pid,
++	    sm.last_stage ? sm.last_stage : "none",
++	    msdc_owner_tid, msdc_owner_pid,
+ 	    msdc_rd(MSDC_CFG), msdc_rd(SDC_CFG), msdc_rd(SDC_STS),
+ 	    msdc_rd(MSDC_FIFOCS), msdc_rd(MSDC_INT), msdc_rd(MSDC_DMA_CFG));
+ }
