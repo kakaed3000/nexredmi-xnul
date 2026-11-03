@@ -1,0 +1,58 @@
+--- a/osfmk/kern/exception.c
++++ b/osfmk/kern/exception.c
+@@ -1014,26 +1014,40 @@ angelica_sample_task(const char *name, int pid, task_t task)
+ 	task_lock(task);
+ 	queue_iterate(&task->threads, thread, thread_t, task_threads) {
+ 		arm_saved_state_t *ss = find_user_regs(thread);
+-		char line[400];
++		arm_saved_state_t *ks = thread->machine.kpcb;
++		char line[768];
+ 		int n;
+ 		uint64_t fp;
+ 
+-		if (ss == NULL || !is_saved_state64(ss)) {
+-			continue;
++		n = snprintf(line, sizeof(line),
++		    "SMP %s t%d state 0x%x reason 0x%x bh %d we 0x%llx wr %d kpcb 0x%llx",
++		    name, tn++, thread->state, (unsigned)thread->reason,
++		    (int)thread->block_hint, (unsigned long long)thread->wait_event,
++		    (int)thread->wait_result, (unsigned long long)(uintptr_t)ks);
++		if (ks != NULL && is_saved_state64(ks)) {
++			n += snprintf(line + n, sizeof(line) - n,
++			    " kpc 0x%llx klr 0x%llx ksp 0x%llx",
++			    get_saved_state_pc(ks), get_saved_state_lr(ks),
++			    get_saved_state_sp(ks));
+ 		}
+-		fp = get_saved_state_fp(ss);
+-		n = snprintf(line, sizeof(line), "SMP %s t%d pc 0x%llx lr 0x%llx sp 0x%llx bt", name, tn++,
+-		    get_saved_state_pc(ss), get_saved_state_lr(ss), get_saved_state_sp(ss));
+-		for (int i = 0; i < 16 && fp != 0 && (fp & 7) == 0 && n < (int)sizeof(line) - 20; i++) {
+-			uint64_t frame[2];
+-			if (vm_map_read_user(map, fp, frame, sizeof(frame)) != KERN_SUCCESS) {
+-				break;
+-			}
+-			n += snprintf(line + n, sizeof(line) - n, " 0x%llx", frame[1]);
+-			if (frame[0] <= fp) {
+-				break;
++		if (ss != NULL && is_saved_state64(ss)) {
++			fp = get_saved_state_fp(ss);
++			n += snprintf(line + n, sizeof(line) - n,
++			    " pc 0x%llx lr 0x%llx sp 0x%llx bt",
++			    get_saved_state_pc(ss), get_saved_state_lr(ss),
++			    get_saved_state_sp(ss));
++			for (int i = 0; i < 16 && fp != 0 && (fp & 7) == 0 &&
++			    n < (int)sizeof(line) - 20; i++) {
++				uint64_t frame[2];
++				if (vm_map_read_user(map, fp, frame, sizeof(frame)) != KERN_SUCCESS) {
++					break;
++				}
++				n += snprintf(line + n, sizeof(line) - n, " 0x%llx", frame[1]);
++				if (frame[0] <= fp) {
++					break;
++				}
++				fp = frame[0];
+ 			}
+-			fp = frame[0];
+ 		}
+ 		printf("%s\n", line);
+ 	}
