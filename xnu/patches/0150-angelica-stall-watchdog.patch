@@ -1,6 +1,6 @@
 --- a/bsd/dev/angelica_msdc.c
 +++ b/bsd/dev/angelica_msdc.c
-@@ -115,6 +115,15 @@
+@@ -115,6 +115,16 @@
  static volatile int msdc_owner_pid;
  static volatile int msdc_reported_tid;
  static const char *msdc_reported_stage;
@@ -13,10 +13,11 @@
 +static const char *msdc_watchdog_stage;
 +
 +extern kern_return_t kernel_thread_start(thread_continue_t, void *, thread_t *);
++extern int hz;
  
  static inline uint32_t
  msdc_rd(uint32_t off)
-@@ -136,6 +145,48 @@
+@@ -136,6 +146,48 @@
  	return d + mach_absolute_time();
  }
  
@@ -65,7 +66,7 @@
  static void
  msdc_lock_busy(void)
  {
-@@ -248,6 +299,12 @@
+@@ -248,6 +300,12 @@
  	uint32_t resp = 0;
  	uint32_t cfg, ctrl, ints;
  	int error;
@@ -78,7 +79,7 @@
  
  	sm.last_stage = "sector-start";
  	msdc_dma_stop();
-@@ -325,6 +382,9 @@
+@@ -325,6 +383,9 @@
  	}
  
  out:
@@ -88,7 +89,7 @@
  	msdc_wr(MSDC_CFG, msdc_rd(MSDC_CFG) | MSDC_CFG_PIO);
  	return error;
  }
-@@ -771,6 +831,16 @@
+@@ -771,6 +832,16 @@
  	kprintf("ANGELICA MSDC: hook usb start\n");
  	angelica_usb_probe();
  	kprintf("ANGELICA MSDC: hook usb done\n");
