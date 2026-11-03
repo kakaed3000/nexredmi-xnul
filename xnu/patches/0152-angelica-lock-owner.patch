@@ -1,5 +1,5 @@
---- a/bsd/dev/angelica_msdc.c
-+++ b/bsd/dev/angelica_msdc.c
+--- /tmp/opencode/0152-base/bsd/dev/angelica_msdc.c	2026-11-03 18:43:46.757024273 +0500
++++ bsd/dev/angelica_msdc.c	2026-11-03 19:05:06.299972985 +0500
 @@ -122,6 +122,7 @@
  static volatile uint64_t msdc_lock_start;
  static int msdc_watchdog_chan;
@@ -8,14 +8,18 @@
  static const char *msdc_watchdog_stage;
  
  extern kern_return_t kernel_thread_start(thread_continue_t, void *, thread_t *);
-@@ -147,14 +148,23 @@
+@@ -147,14 +148,27 @@
  	return d + mach_absolute_time();
  }
  
 +static ctid_t
 +msdc_lock_owner_ctid(void)
 +{
-+	return (ctid_t)(angelica_msdc_lock.lck_mtx.data & LCK_MTX_CTID_MASK);
++	uint32_t state;
++
++	/* BSD sees lck_mtx_t as opaque; arm64 mutex state is at +8. */
++	state = ((volatile uint32_t *)&angelica_msdc_lock)[2];
++	return (ctid_t)(state & 0x0fffffffu);
 +}
 +
  /*
@@ -35,7 +39,7 @@
  	int tid, pid;
  
  	(void)arg;
-@@ -163,9 +173,17 @@
+@@ -163,9 +177,17 @@
  
  	for (;;) {
  		tsleep(&msdc_watchdog_chan, PZERO, "msdcwd", 10 * hz);
@@ -55,7 +59,7 @@
  			pid = msdc_owner_pid;
  			start = msdc_lock_start;
  		} else {
-@@ -181,11 +199,14 @@
+@@ -181,11 +203,14 @@
  		}
  		msdc_watchdog_reported_tid = tid;
  		msdc_watchdog_stage = sm.last_stage;
@@ -73,7 +77,7 @@
  		    msdc_io_tid, msdc_io_pid, (unsigned long long)msdc_io_lba,
  		    msdc_rd(MSDC_CFG), msdc_rd(SDC_CFG), msdc_rd(SDC_STS),
  		    msdc_rd(MSDC_FIFOCS), msdc_rd(MSDC_INT), msdc_rd(MSDC_DMA_CFG));
-@@ -195,7 +216,10 @@
+@@ -195,7 +220,10 @@
  static void
  msdc_lock_busy(void)
  {
@@ -85,7 +89,7 @@
  	int pid = msdc_owner_pid;
  
  	if (tid == 0 ||
-@@ -204,9 +228,12 @@
+@@ -204,9 +232,12 @@
  	}
  	msdc_reported_tid = tid;
  	msdc_reported_stage = sm.last_stage;
