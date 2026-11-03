@@ -1,0 +1,116 @@
+--- a/bsd/dev/angelica_msdc.c
++++ b/bsd/dev/angelica_msdc.c
+@@ -119,6 +119,7 @@
+ static volatile int msdc_io_pid;
+ static volatile uint64_t msdc_io_lba;
+ static volatile uint64_t msdc_io_start;
++static volatile uint64_t msdc_lock_start;
+ static int msdc_watchdog_chan;
+ static int msdc_watchdog_reported_tid;
+ static const char *msdc_watchdog_stage;
+@@ -154,7 +155,7 @@
+ msdc_watchdog_thread(void *arg, wait_result_t wr)
+ {
+ 	uint64_t threshold, now, start;
+-	int tid;
++	int tid, pid;
+ 
+ 	(void)arg;
+ 	(void)wr;
+@@ -162,13 +163,17 @@
+ 
+ 	for (;;) {
+ 		tsleep(&msdc_watchdog_chan, PZERO, "msdcwd", 10 * hz);
+-		tid = msdc_io_tid;
+-		if (tid == 0) {
+-			continue;
+-		}
+ 		now = mach_absolute_time();
+-		start = msdc_io_start;
+-		if (now <= start + threshold) {
++		if (msdc_owner_tid != 0) {
++			tid = msdc_owner_tid;
++			pid = msdc_owner_pid;
++			start = msdc_lock_start;
++		} else {
++			tid = msdc_io_tid;
++			pid = msdc_io_pid;
++			start = msdc_io_start;
++		}
++		if (tid == 0 || now <= start + threshold) {
+ 			continue;
+ 		}
+ 		if (tid == msdc_watchdog_reported_tid && sm.last_stage == msdc_watchdog_stage) {
+@@ -176,13 +181,12 @@
+ 		}
+ 		msdc_watchdog_reported_tid = tid;
+ 		msdc_watchdog_stage = sm.last_stage;
+-		kprintf("ANGELICA MSDC: read stalled t%d pid %d lba 0x%llx "
+-		    "stage %s start 0x%llx now 0x%llx owner t%d pid %d "
++		kprintf("ANGELICA MSDC: lock held t%d pid %d stage %s "
++		    "start 0x%llx now 0x%llx io t%d pid %d lba 0x%llx "
+ 		    "cfg=0x%x sdc_cfg=0x%x sts=0x%x fifo=0x%x int=0x%x dma=0x%x\n",
+-		    tid, msdc_io_pid, (unsigned long long)msdc_io_lba,
+-		    sm.last_stage ? sm.last_stage : "none",
++		    tid, pid, sm.last_stage ? sm.last_stage : "none",
+ 		    (unsigned long long)start, (unsigned long long)now,
+-		    msdc_owner_tid, msdc_owner_pid,
++		    msdc_io_tid, msdc_io_pid, (unsigned long long)msdc_io_lba,
+ 		    msdc_rd(MSDC_CFG), msdc_rd(SDC_CFG), msdc_rd(SDC_STS),
+ 		    msdc_rd(MSDC_FIFOCS), msdc_rd(MSDC_INT), msdc_rd(MSDC_DMA_CFG));
+ 	}
+@@ -218,6 +222,7 @@
+ 	}
+ 	msdc_owner_tid = (int)thread_tid(current_thread());
+ 	msdc_owner_pid = p != NULL ? proc_pid(p) : 0;
++	msdc_lock_start = mach_absolute_time();
+ }
+ 
+ static void
+@@ -225,6 +230,11 @@
+ {
+ 	msdc_owner_tid = 0;
+ 	msdc_owner_pid = 0;
++	msdc_lock_start = 0;
++	msdc_reported_tid = 0;
++	msdc_reported_stage = NULL;
++	msdc_watchdog_reported_tid = 0;
++	msdc_watchdog_stage = NULL;
+ 	lck_mtx_unlock(&angelica_msdc_lock);
+ }
+ 
+@@ -624,18 +634,21 @@
+ 		uint64_t pos = off + done;
+ 		uint32_t in = (uint32_t)(pos % MSDC_BLOCK);
+ 		uint32_t want = MIN(count - done, MSDC_BLOCK - in);
++		uint8_t tmp[MSDC_BLOCK];
+ 
+ 		msdc_lock_acquire();
+ 		sm.last_stage = "strategy";
+ 		error = msdc_read_sector(sm.first_block + pos / MSDC_BLOCK);
+ 		if (error == 0) {
+-			sm.last_stage = "copy";
+-			memcpy(vaddr + done, sm.sector + in, want);
++			sm.last_stage = "copy-lock";
++			memcpy(tmp, sm.sector + in, want);
+ 		}
+ 		msdc_lock_release();
+ 		if (error) {
+ 			break;
+ 		}
++		sm.last_stage = "copy";
++		memcpy(vaddr + done, tmp, want);
+ 		done += want;
+ 		buf_setresid(bp, count - done);
+ 	}
+--- a/bsd/dev/angelica_sample.c
++++ b/bsd/dev/angelica_sample.c
+@@ -77,7 +77,7 @@
+ 	(void)tsleep(&chan, PZERO, "angelicasmp", 90 * hz);
+ 	for (int i = 0; i < 40; i++) {
+ 		printf("SMP --- sample %d\n", i);
+-		proc_iterate(PROC_ALLPROCLIST, angelica_sample_proc, NULL, NULL, NULL);
++		proc_iterate(PROC_ALLPROCLIST | PROC_NOWAITTRANS, angelica_sample_proc, NULL, NULL, NULL);
+ 		printf("ANGELICA SAMPLE: sample %d done, sleeping\n", i);
+ 		(void)tsleep(&chan, PZERO, "angelicasmp", 120 * hz);
+ 	}
