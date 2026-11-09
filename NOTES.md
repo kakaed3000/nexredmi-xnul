@@ -41,35 +41,48 @@ Target: **Redmi 9C only** (`angelica`, MediaTek MT6765 / Helio G35, 8× Cortex-A
   as the 8-CPU run, so cluster1, CPU6–7 and first-pass 8-core startup are not
   the cause. The stall predates 0145.
 
-## MSDC status after 0159 (static bounce) and 0160 (proper init/CRC)
+## MSDC status after 0161 (static bounce + proper init/CRC)
 
 - **0154** (`b3a311d`) added fast mode (div clock, 4-bit, 64K bounce, CMD18
-  multi-block). Every fast build (0154-0159) panicked: apps died with PAC-farts
-  inside the dyld cache, then the kernel lost a freed 48-byte zone element
-  (`[task_id_token] element modified after free`, later `[data.kalloc.16384]`
-  and `[kalloc.type2.48]/[kalloc.type13.48]`). 0152b (slow, 1-bit, div 0x40)
-  was stable for 26+ minutes.
-- Root cause split into two issues:
+  multi-block). Every fast build (0154-0160) panicked: apps died with
+  PAC-farts inside the dyld cache, then the kernel lost a freed 48-byte
+  zone element (`[task_id_token] element modified after free`, later
+  `[data.kalloc.16384]`, `[kalloc.type2.48]`, `[kalloc.type13.48]`).
+  0152b (slow, 1-bit, div 0x40) was stable for 26+ minutes.
+- **Root cause was twofold, but only one was real:**
   1. **DMA scribble into arbitrary physical pages** - the 64K bounce was a
      plain kalloc'd buffer; `kmem_alloc_contig` does not guarantee
-     contiguity, so DMA wrote into unrelated kernel pages (`compressed PTE
-     ... corrupted?` panic). **0159** (`01cb63a`) makes the bounce a
-     statically allocated, physically contiguous buffer inside the kernel
-     image (via `kvtophys`).
-  2. **Marginal MSDC timing at high divider-free speed**: div=4/var=4-bit
-     and even div=8 corrupt data without triggering the host CRC, so iOS
-     dies inside the dyld cache. div=16 works, div=0x40 works.
-- **0160** rewrites the driver init/programming to the stock MediaTek flow
-  (`ComboA/sd.c`): MSDC_CFG_MODE = SDMMC (was 0), proper `msdc_set_mclk()`
-  (mode 0 divisor / mode 1 no-divisor, hclk = 400 MHz from DTS `clk_src=1`),
-  sampling-edge control from boot-args (`angelicamscmd_edge`,
-  `angelicamsdrdata_edge`, `angelicamdswdata_edge`, 0=rising 1=falling,
-  default 0/0/0 as the stock DTS), and a **3-retry loop on
-  `MSDC_INT_CMDTMO` / `MSDC_INT_RSPCRCERR` / `MSDC_INT_DATCRCERR` /
-  `MSDC_INT_DATTMO`** (previously any CRC error silently returned EIO and
-  data errors were impossible to recover). The default operating clock is
-  26 MHz (`angelicamsdcclk`), 1-bit width by default; width/clk/edges can be
-  swept from boot-args. Full HS200/HS400 autok is not implemented yet.
+     contiguity, so DMA wrote into unrelated kernel pages
+     (`compressed PTE ... corrupted?` panic).
+  2. **Marginal MSDC timing** at high divider-free speed (div=4/8) corrupts
+     data without the host CRC flagging, so iOS dies inside the dyld cache
+     (`[task_id_token]`/`[data.kalloc.16384]` UAF afterwards).
+- **0159 (`01cb63a`) and 0160 (`f956021`) were silently skipped in CI.**
+  The DXB build applies `xnu/patches/*.patch` in order but tolerates patch
+  failures and keeps going; a hand-built context in the 0159 hunk was
+  mis-placed, both patches failed to apply ("Skipping patch ... patch
+  failed: bsd/dev/angelica_msdc.c:1060"), and the build produced the
+  un-fixed driver. **All div-test boots (div4/8/16, nomulti, safemsdc,
+  w1fastdiv, 0159-div8/div4) therefore ran a driver without any of these
+  fixes.** The panics we saw on those boots are explained by that.
+- **0161** (`0161-angelica-msdc-fix.patch`) combines both fixes and is
+  generated against the real upstream source so it applies cleanly and is
+  verified locally with `patch -p1 --dry-run`. It contains:
+  - the static, physically contiguous 64K bounce buffer (via `kvtophys`);
+  - `MSDC_CFG_MODE = SDMMC` (was 0);
+  - `msdc_set_mclk()` (mode 0 divisor / mode 1 no-divisor, hclk = 400 MHz
+    from DTS `clk_src=1`);
+  - sampling-edge boot-args (`angelicamscmd_edge`,
+    `angelicamsdrdata_edge`, `angelicamdswdata_edge`, 0=rising 1=falling,
+    default 0/0/0 as stock DTS);
+  - a 3-retry loop on `MSDC_INT_CMDTMO` / `MSDC_INT_RSPCRCERR` /
+    `MSDC_INT_DATCRCERR` / `MSDC_INT_DATTMO` (before, a CRC error silently
+    returned EIO; a fast data error was never retried);
+  - default operating clock 26 MHz (`angelicamsdcclk`), 1-bit width by
+    default. Full HS200/HS400 autok is not implemented.
+- **`boot` images must be rebuilt** after this lands; the previously
+  flashed 0159-div4/div8/div16 images contain none of these fixes.
+
 - **0150-0158 panic logger** (`0155-0158-*.patch`) catches the panic text
   over USB via `angelica_early_panic` + `angelica_usb_panic_log`: prints
   `ANGELICA PANIC: op=.. str=.. caller=.. msg=[..]` and the last 1 KB of

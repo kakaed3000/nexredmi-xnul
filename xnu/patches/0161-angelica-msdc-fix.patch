@@ -45,7 +45,16 @@
  #define EXT_CSD_BUS_WIDTH   183u
  #define R1B_RSPTYP          7u
  
-@@ -119,6 +133,10 @@
+@@ -106,6 +120,8 @@
+ #define R1_OUT_OF_RANGE     (1u << 31)
+ #define R1_ERROR            (1u << 19)
+ 
++static uint8_t msdc_bounce_static[MSDC_BOUNCE_SIZE] __attribute__((aligned(4096)));
++
+ static struct {
+ 	vm_offset_t regs;
+ 	vm_offset_t dma;                        /* physically contiguous bounce buffer */
+@@ -117,6 +133,10 @@
  	uint32_t rca;
  	uint32_t width;
  	uint32_t clock_div;
@@ -56,7 +65,7 @@
  	uint8_t sector[MSDC_BLOCK] __attribute__((aligned(64))); /* single-block bounce */
  	const char *last_stage;
  	int bmajor, cmajor;
-@@ -350,53 +368,59 @@
+@@ -348,53 +368,59 @@
      uint32_t *resp)
  {
  	uint64_t deadline = msdc_deadline(CMD_TIMEOUT_NS);
@@ -151,7 +160,7 @@
  }
  
  static void
-@@ -450,21 +474,86 @@
+@@ -448,21 +474,86 @@
  	sm.width = width;
  }
  
@@ -203,7 +212,7 @@
 -	uint32_t cfg = msdc_rd(MSDC_CFG);
 +	uint32_t cfg, mode, div;
 +	uint64_t hclk = MSDC_HCLK_HZ;
- 
++
 +	if (hz == 0) {
 +		msdc_wr(MSDC_CFG, msdc_rd(MSDC_CFG) | MSDC_CFG_CKPDN);
 +		sm.sclk_hz = 0;
@@ -222,7 +231,7 @@
 +		mode = 0x0;
 +		div = (uint32_t)((hclk + ((hz << 2) - 1)) / (hz << 2));
 +	}
-+
+ 
 +	cfg = msdc_rd(MSDC_CFG);
  	cfg &= ~(MSDC_CFG_CKMOD | MSDC_CFG_CKMOD_HS400 | MSDC_CFG_SCLK_STOP_DDR);
 -	cfg = (cfg & ~MSDC_CFG_CKDIV) | ((div & 0xfffu) << 8);
@@ -242,7 +251,7 @@
  	return 0;
  }
  
-@@ -500,12 +589,8 @@
+@@ -498,12 +589,8 @@
  static int
  msdc_xfer(uint64_t lba, uint32_t blocks, uint8_t *buf, addr64_t paddr)
  {
@@ -255,7 +264,7 @@
  	int error;
  	proc_t p = current_proc();
  
-@@ -515,87 +600,103 @@
+@@ -513,87 +600,103 @@
  	msdc_io_blocks = blocks;
  	msdc_io_start = mach_absolute_time();
  
@@ -430,7 +439,7 @@
  	msdc_io_tid = 0;
  	msdc_io_pid = 0;
  	msdc_io_blocks = 0;
-@@ -664,9 +765,12 @@
+@@ -662,9 +765,12 @@
  	cfg &= ~(MSDC_CFG_CKMOD | MSDC_CFG_CKMOD_HS400 | MSDC_CFG_SCLK_STOP_DDR);
  	cfg |= MSDC_CFG_PIO;
  	cfg &= ~MSDC_CFG_CKPDN;
@@ -445,11 +454,12 @@
  	kprintf("ANGELICA MSDC: cfg written, waiting clock\n");
  	for (uint32_t i = 0; !(msdc_rd(MSDC_CFG) & MSDC_CFG_CKSTB) && i < 100; i++) {
  		delay(1);
-@@ -1036,7 +1140,10 @@
+@@ -1034,8 +1140,10 @@
  	uintptr_t const *reg = NULL;
  	unsigned int size = 0;
  	char want[64] = "userdata";
 -	uint32_t fast = 1, multi = 1, width = 4, div = MSDC_FAST_DIV;
+-	ppnum_t pn;
 +	uint32_t fast = 1, multi = 1, width = 1, div = 0;
 +	uint64_t clk = MSDC_DEFAULT_HZ;
 +	uint32_t cmd_edge = 0, rdata_edge = 0, wdata_edge = 0;
@@ -457,7 +467,7 @@
  	int error;
  
  	kprintf("ANGELICA MSDC: init enter\n");
-@@ -1050,16 +1157,18 @@
+@@ -1049,35 +1157,36 @@
  	PE_parse_boot_argn("angelicamsdcfast", &fast, sizeof(fast));
  	PE_parse_boot_argn("angelicamsdcmulti", &multi, sizeof(multi));
  	PE_parse_boot_argn("angelicamsdcwidth", &width, sizeof(width));
@@ -480,8 +490,20 @@
  
  	kprintf("ANGELICA MSDC: mapping reg %p size 0x%x\n", (void *)reg[0], (unsigned)reg[1]);
  	sm.regs = ml_io_map(reg[0], reg[1]);
-@@ -1071,9 +1180,13 @@
- 	sm.bounce = msdc_bounce_static;
+ 	kprintf("ANGELICA MSDC: mapped regs %p\n", (void *)sm.regs);
+ 	sm.secsize = DEV_BSIZE;
+ 
+-	if (kmem_alloc_contig(kernel_map, &sm.dma, MSDC_BOUNCE_SIZE, PAGE_MASK, 0, 0,
+-	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) == KERN_SUCCESS) {
+-		pn = pmap_find_phys(kernel_pmap, (addr64_t)sm.dma);
+-		if (pn != 0) {
+-			sm.dma_pa = (uint64_t)pn << PAGE_SHIFT;
+-			sm.bounce = (uint8_t *)sm.dma;
+-		}
+-	}
++	sm.dma = (vm_offset_t)msdc_bounce_static;
++	sm.dma_pa = kvtophys((vm_offset_t)msdc_bounce_static);
++	sm.bounce = msdc_bounce_static;
  	sm.bounce_size = sm.bounce != NULL ? MSDC_BOUNCE_SIZE : MSDC_BLOCK;
  	sm.multi = multi != 0 && sm.bounce != NULL;
 -	kprintf("ANGELICA MSDC: bounce %p pa 0x%llx size 0x%x multi %d fast %u width %u div 0x%x\n",
@@ -496,7 +518,7 @@
  
  	kprintf("ANGELICA MSDC: locking\n");
  	msdc_lock_acquire();
-@@ -1093,9 +1206,27 @@
+@@ -1097,9 +1206,27 @@
  			    width, error, sm.width);
  		}
  		if (error == 0) {
