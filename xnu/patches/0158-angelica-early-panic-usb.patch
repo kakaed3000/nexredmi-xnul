@@ -8,3 +8,111 @@
  #include <kern/clock.h>
  #include <kern/thread.h>
  #include <kern/sched_prim.h>
+@@ -1709,6 +1710,36 @@
+ 	}
+ }
+ 
++static char ud_early_text[1024];
++static unsigned int ud_early_len;
++
++static void
++ud_early_putc(char c)
++{
++	if (ud_early_len < sizeof(ud_early_text) - 1) {
++		ud_early_text[ud_early_len++] = c;
++	}
++}
++
++void
++angelica_usb_early_panic(const char *fmt, va_list *args)
++{
++	va_list copy;
++
++	if (!ud.ready || !ud.configured || ud.data_alt != 1 ||
++	    ud.musb == 0 || ud.buf == 0) {
++		return;
++	}
++	ud_early_len = 0;
++	if (fmt != NULL && args != NULL) {
++		va_copy(copy, *args);
++		_doprnt(fmt, &copy, ud_early_putc, 16);
++		va_end(copy);
++	}
++	ud_early_text[ud_early_len] = '\0';
++	angelica_usb_panic_log("early", ud_early_text);
++}
++
+ static void
+ ud_panic_send_ring(void)
+ {
+@@ -1726,9 +1757,9 @@
+ angelica_usb_panic_log(const char *message, const char *panic_text)
+ {
+ 	static const char banner[] = "\n=== ANGELICA USB PANIC LOG ===\n";
+-	char diag[192];
++	char diag[256];
+ 	uint32_t len = 0;
+-	int n;
++	int n, i;
+ 
+ 	if (!ud.ready || !ud.configured || ud.data_alt != 1 ||
+ 	    ud.musb == 0 || ud.buf == 0) {
+@@ -1744,22 +1775,21 @@
+ 		len = 32768;
+ 	}
+ 	n = snprintf(diag, sizeof(diag),
+-	    "ANGELICA PANIC: %s base=%p ptr=%p size=%u len=%u\n",
+-	    message != NULL ? message : "", debug_buf_base, debug_buf_ptr,
+-	    debug_buf_size, len);
++	    "%sANGELICA PANIC: %s base=%p ptr=%p size=%u len=%u\n",
++	    banner, message != NULL ? message : "", debug_buf_base,
++	    debug_buf_ptr, debug_buf_size, len);
+ 	if (n > (int)sizeof(diag) - 1) {
+ 		n = (int)sizeof(diag) - 1;
+ 	}
+-	ud_panic_send_text(banner, sizeof(banner) - 1);
+-	ud_panic_send_text(banner, sizeof(banner) - 1);
+-	if (n > 0) {
+-		ud_panic_send_text(diag, (uint32_t)n);
++	for (i = 0; i < 4 && n > 0; i++) {
+ 		ud_panic_send_text(diag, (uint32_t)n);
+ 	}
+ 	if (panic_text != NULL && panic_text[0] != '\0') {
+-		ud_panic_send_text("panic string: ", 14);
+-		ud_panic_send_text(panic_text, (uint32_t)strlen(panic_text));
+-		ud_panic_send_text("\n", 1);
++		for (i = 0; i < 2; i++) {
++			ud_panic_send_text("panic string: ", 14);
++			ud_panic_send_text(panic_text, (uint32_t)strlen(panic_text));
++			ud_panic_send_text("\n", 1);
++		}
+ 	}
+ 	if (len != 0) {
+ 		ud_panic_send_text(debug_buf_base, len);
+--- a/osfmk/arm64/angelica_early.c
++++ b/osfmk/arm64/angelica_early.c
+@@ -11,6 +11,8 @@
+ #include <stdint.h>
+ #include <kern/misc_protos.h>
+ 
++extern void angelica_usb_early_panic(const char *fmt, va_list *args);
++
+ #ifdef ARM64_BOARD_CONFIG_ANGELICA
+ #define EARLY_FB_PHYS 0x5e605000u
+ #define EARLY_WIDTH 720u
+@@ -133,10 +135,14 @@
+ void
+ angelica_early_panic(const char *fmt, va_list *args)
+ {
+-	if (early_disabled || early_panicking) {
++	if (early_panicking) {
+ 		return;
+ 	}
+ 	early_panicking = 1;
++	angelica_usb_early_panic(fmt, args);
++	if (early_disabled) {
++		return;
++	}
+ 	angelica_early_string("\nANGELICA EARLY PANIC: ");
+ 	va_list copy;
+ 	va_copy(copy, *args);
