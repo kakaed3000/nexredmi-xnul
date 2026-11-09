@@ -1,0 +1,187 @@
+--- a/bsd/dev/angelica_usb.c
++++ b/bsd/dev/angelica_usb.c
+@@ -29,7 +29,10 @@
+ 
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ void angelica_usb_probe(void);
+-static void angelica_usb_gadget_start(vm_offset_t musb);
++static void
++angelica_usb_gadget_start(vm_offset_t musb);
++void angelica_usb_panic_log(void);
++
+ 
+ #define MUSB_PA                 0x11200000
+ #define MUSB_SIZE               0x00010000
+@@ -1580,3 +1583,149 @@
+ 	printf("ANGELICA USB: gadget done\n");
+ }
+ #endif /* ARM64_BOARD_CONFIG_ANGELICA */
++
++/*
++ * Panic-time logging: the normal livelog thread needs the scheduler and the
++ * BSD socket layer, neither of which exists once one CPU has entered panic.
++ * The gadget itself is hardware, so push plain Ethernet/UDP frames into the
++ * already-configured IN endpoint directly.  The host sees ordinary UDP
++ * datagrams on the same 5140 port as the live log.
++ */
++extern char *debug_buf_base;
++extern char *debug_buf_ptr;
++extern unsigned int debug_buf_size;
++
++static uint16_t
++ud_panic_checksum(const uint8_t *p, uint32_t len)
++{
++	uint32_t sum = 0;
++
++	while (len >= 2) {
++		sum += ((uint32_t)p[0] << 8) | p[1];
++		p += 2;
++		len -= 2;
++	}
++	if (len) {
++		sum += (uint32_t)p[0] << 8;
++	}
++	while (sum >> 16) {
++		sum = (sum & 0xffff) + (sum >> 16);
++	}
++	return (uint16_t)~sum;
++}
++
++static void
++ud_panic_put16(uint8_t *p, uint16_t v)
++{
++	p[0] = (uint8_t)(v >> 8);
++	p[1] = (uint8_t)v;
++}
++
++static bool
++ud_panic_send_frame(const uint8_t *data, uint32_t len, uint16_t id)
++{
++	uint8_t *frame = (uint8_t *)(ud.buf + UD_TX);
++	uint32_t ip_len = 20 + 8 + len;
++	uint32_t frame_len = 14 + ip_len;
++	uint32_t padded = frame_len < 60 ? 60 : frame_len;
++	uint16_t csr;
++	uint16_t sum;
++
++	if (len == 0 || frame_len > 512) {
++		return false;
++	}
++	memset(frame, 0, padded);
++	memset(frame, 0xff, 6);
++	memcpy(frame + 6, ud_phone_mac, ETHER_ADDR_LEN);
++	frame[12] = 0x08;
++	frame[13] = 0x00;
++	frame[14] = 0x45;
++	frame[15] = 0x00;
++	ud_panic_put16(frame + 16, (uint16_t)ip_len);
++	ud_panic_put16(frame + 18, id);
++	frame[20] = 0x40;
++	frame[21] = 0x00;
++	frame[22] = 64;
++	frame[23] = 17;
++	frame[26] = 192;
++	frame[27] = 168;
++	frame[28] = 7;
++	frame[29] = 2;
++	frame[30] = 192;
++	frame[31] = 168;
++	frame[32] = 7;
++	frame[33] = 1;
++	sum = ud_panic_checksum(frame + 14, 20);
++	ud_panic_put16(frame + 24, sum);
++	ud_panic_put16(frame + 34, 5141);
++	ud_panic_put16(frame + 36, 5140);
++	ud_panic_put16(frame + 38, (uint16_t)(8 + len));
++	memcpy(frame + 42, data, len);
++
++	ud_ep_select(1);
++	csr = ud_rd16(ud_epio(MUSB_TXCSR));
++	csr |= MUSB_TXCSR_FLUSHFIFO | MUSB_TXCSR_P_WZC_BITS;
++	csr &= ~MUSB_TXCSR_TXPKTRDY;
++	ud_wr16(ud_epio(MUSB_TXCSR), csr);
++	for (uint32_t i = 0; i < 20; i++) {
++		if (!(ud_rd16(ud_epio(MUSB_TXCSR)) & MUSB_TXCSR_TXPKTRDY)) {
++			break;
++		}
++		delay(1);
++	}
++	ud_fifo_write(1, frame, padded);
++	csr = ud_rd16(ud_epio(MUSB_TXCSR));
++	csr |= MUSB_TXCSR_TXPKTRDY;
++	ud_wr16(ud_epio(MUSB_TXCSR), csr);
++	for (uint32_t i = 0; i < 100; i++) {
++		if (!(ud_rd16(ud_epio(MUSB_TXCSR)) & MUSB_TXCSR_TXPKTRDY)) {
++			return true;
++		}
++		delay(1);
++	}
++	return false;
++}
++
++static void
++ud_panic_send_text(const char *text, uint32_t len)
++{
++	static uint16_t id;
++	uint32_t off = 0;
++
++	while (off < len) {
++		uint32_t n = len - off;
++		if (n > 400) {
++			n = 400;
++		}
++		if (!ud_panic_send_frame((const uint8_t *)text + off, n, ++id)) {
++			break;
++		}
++		off += n;
++	}
++}
++
++void
++angelica_usb_panic_log(void)
++{
++	static const char banner[] = "\n=== ANGELICA USB PANIC LOG ===\n";
++	uint32_t len = 0;
++
++	if (!ud.ready || !ud.configured || ud.data_alt != 1 ||
++	    ud.musb == 0 || ud.buf == 0) {
++		return;
++	}
++	if (debug_buf_base != NULL && debug_buf_ptr > debug_buf_base) {
++		len = (uint32_t)(debug_buf_ptr - debug_buf_base);
++	}
++	if (debug_buf_size != 0 && len > debug_buf_size) {
++		len = debug_buf_size;
++	}
++	if (len > 32768) {
++		len = 32768;
++	}
++	ud_panic_send_text(banner, sizeof(banner) - 1);
++	if (len != 0) {
++		ud_panic_send_text(debug_buf_base, len);
++	}
++	ud_panic_send_text("\n=== END PANIC LOG ===\n", 23);
++}
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -249,6 +249,9 @@
+ void panic_spin_forever(void) __dead2;
+ extern kern_return_t do_stackshot(void);
+ extern void PE_panic_hook(const char*);
++#if defined(ANGELICA)
++extern void angelica_usb_panic_log(void);
++#endif
+ 
+ #define NESTEDDEBUGGERENTRYMAX 5
+ static TUNABLE(unsigned int, max_debugger_entry_count, "nested_panic_max",
+@@ -1310,6 +1313,10 @@
+ 		 */
+ 		SavePanicInfo(debugger_message, debugger_panic_data, debugger_panic_options);
+ 
++#if defined(ANGELICA)
++		angelica_usb_panic_log();
++#endif
++
+ #if DEVELOPMENT || DEBUG
+ 		INJECT_NESTED_PANIC_IF_REQUESTED(PANIC_TEST_CASE_RECURPANIC_POSTLOG);
+ #endif
