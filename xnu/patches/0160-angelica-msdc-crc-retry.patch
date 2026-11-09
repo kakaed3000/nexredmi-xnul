@@ -1,0 +1,529 @@
+--- a/bsd/dev/angelica_msdc.c
++++ b/bsd/dev/angelica_msdc.c
+@@ -1,12 +1,15 @@
+ /*
+  * ANGELICA ANGELICA internal eMMC root device (read-only).
+  *
+- * LK already initialised the MediaTek MSDC0 host and the eMMC (our boot image
+- * came from this chip), so this driver reuses that state: polled single-block
+- * PIO reads (CMD17) through the controller FIFO, no DMA, no re-tuning. It
+- * finds one GPT partition by name (boot-arg msdcroot=, default "userdata")
+- * and exposes it as the BSD disk msdcroot0 (rmsdcroot0), with 512-byte
+- * logical sectors. Root on it with rd=msdcroot0. Writes are refused.
++ * MSDC0 (400 MHz source) in SDMMC mode, polled commands, DMA for block
++ * transfers (CMD17/CMD18) into a statically-allocated physically contiguous
++ * bounce buffer.  Read requests are retried up to MSDC_RETRY_COUNT times on
++ * CRC/timeout errors; sampling-edge tuning via MSDC_IOCON is available from
++ * boot-args (angelicamscmd_edge/angelicamsdrdata_edge/angelicamdswdata_edge,
++ * 0 = rising, 1 = falling).  Finds one GPT partition by name (boot-arg
++ * msdcroot=, default "userdata") and exposes it as the BSD disk msdcroot0
++ * (rmsdcroot0), with 512-byte logical sectors. Root on it with rd=msdcroot0.
++ * Writes are refused.
+  */
+ #if defined(ARM64_BOARD_CONFIG_ANGELICA)
+ #include <sys/param.h>
+@@ -96,9 +99,20 @@
+ #define MSDC_BOUNCE_SIZE    (64u << 10)         /* one CMD18 transfer */
+ #define MSDC_FIFO_WORDS     (MSDC_BLOCK / 4)
+ #define CMD_TIMEOUT_NS      (2ull * NSEC_PER_SEC)
+-#define MSDC_SLOW_DIV       0x40u
+-#define MSDC_FAST_DIV       4u                  /* ~12.5-25 MHz default speed */
+ #define MSDC_SWITCH_WRITE   3u
++#define MSDC_CFG_MODE       (1u << 0)		/* SDMMC mode */
++#define MSDC_IOCON          0x04
++#define MSDC_IOCON_RSPL     (1u << 1)
++#define MSDC_IOCON_R_D_SMPL_SEL (1u << 5)
++#define MSDC_PATCH_BIT0     0xb0
++#define MSDC_PB0_RD_DAT_SEL (1u << 3)
++#define MSDC_PATCH_BIT2     0xb8
++#define MSDC_PB2_CFGCRCSTSEDGE (1u << 25)
++#define MSDC_HCLK_HZ        400000000ull
++#define MSDC_DEFAULT_HZ     26000000ull
++#define MSDC_INIT_HZ        260000ull
++#define MSDC_RETRY_COUNT    3
++
+ #define EXT_CSD_BUS_WIDTH   183u
+ #define R1B_RSPTYP          7u
+ 
+@@ -119,6 +133,10 @@
+ 	uint32_t rca;
+ 	uint32_t width;
+ 	uint32_t clock_div;
++	uint64_t sclk_hz;
++	uint32_t cmd_edge;
++	uint32_t rdata_edge;
++	uint32_t wdata_edge;
+ 	uint8_t sector[MSDC_BLOCK] __attribute__((aligned(64))); /* single-block bounce */
+ 	const char *last_stage;
+ 	int bmajor, cmajor;
+@@ -350,53 +368,59 @@
+     uint32_t *resp)
+ {
+ 	uint64_t deadline = msdc_deadline(CMD_TIMEOUT_NS);
+-	uint32_t ints;
+ 	uint32_t rawcmd = opcode | (rsptyp << 7) | (MSDC_BLOCK << 16) | (dtype << 11);
++	uint32_t ints;
+ 
+ 	if (opcode == 12) {
+ 		rawcmd |= (1u << 14);           /* STOP_TRANSMISSION */
+ 	}
+ 
+-	while (msdc_rd(SDC_STS) & SDC_STS_SDCBUSY) {
+-		sm.last_stage = "cmd-busy";
+-		if (mach_absolute_time() > deadline) {
+-			sm.last_stage = "busy";
+-			kprintf("ANGELICA MSDC: CMD%u busy timeout sts=0x%x cfg=0x%x\n",
+-			    opcode, msdc_rd(SDC_STS), msdc_rd(MSDC_CFG));
+-			return ETIMEDOUT;
++	for (uint32_t attempt = 0; attempt < MSDC_RETRY_COUNT; attempt++) {
++		uint64_t cmd_deadline = deadline;
++
++		while (msdc_rd(SDC_STS) & SDC_STS_SDCBUSY) {
++			sm.last_stage = "cmd-busy";
++			if (mach_absolute_time() > cmd_deadline) {
++				sm.last_stage = "busy";
++				kprintf("ANGELICA MSDC: CMD%u busy timeout sts=0x%x cfg=0x%x\n",
++				    opcode, msdc_rd(SDC_STS), msdc_rd(MSDC_CFG));
++				return ETIMEDOUT;
++			}
++			delay(1);
+ 		}
+-		delay(1);
+-	}
+-	msdc_wr(MSDC_INT, MSDC_INT_CMDMASK | MSDC_INT_DATAMASK);
++		msdc_wr(MSDC_INT, MSDC_INT_CMDMASK | MSDC_INT_DATAMASK);
+ 
+-	msdc_wr(SDC_ARG, arg);
+-	msdc_wr(SDC_CMD, rawcmd);
++		msdc_wr(SDC_ARG, arg);
++		msdc_wr(SDC_CMD, rawcmd);
+ 
+-	sm.last_stage = "cmd-irq";
+-	for (;;) {
+-		ints = msdc_rd(MSDC_INT) & MSDC_INT_CMDMASK;
+-		if (ints) {
+-			break;
++		sm.last_stage = "cmd-irq";
++		for (;;) {
++			ints = msdc_rd(MSDC_INT) & MSDC_INT_CMDMASK;
++			if (ints) {
++				break;
++			}
++			if (mach_absolute_time() > cmd_deadline) {
++				sm.last_stage = "cmd-irq";
++				kprintf("ANGELICA MSDC: CMD%u irq timeout int=0x%x sts=0x%x cfg=0x%x\n",
++				    opcode, msdc_rd(MSDC_INT), msdc_rd(SDC_STS), msdc_rd(MSDC_CFG));
++				return ETIMEDOUT;
++			}
++			delay(1);
+ 		}
+-		if (mach_absolute_time() > deadline) {
+-			sm.last_stage = "cmd-irq";
+-			kprintf("ANGELICA MSDC: CMD%u irq timeout int=0x%x sts=0x%x cfg=0x%x\n",
+-			    opcode, msdc_rd(MSDC_INT), msdc_rd(SDC_STS), msdc_rd(MSDC_CFG));
+-			return ETIMEDOUT;
++		msdc_wr(MSDC_INT, ints);
++		if (ints & (MSDC_INT_CMDTMO | MSDC_INT_RSPCRCERR)) {
++			sm.last_stage = "cmd-status";
++			kprintf("ANGELICA MSDC: CMD%u attempt %u error int=0x%x\n",
++			    opcode, attempt, ints);
++			continue;
+ 		}
+-		delay(1);
+-	}
+-	msdc_wr(MSDC_INT, ints);
+-	if (ints & (MSDC_INT_CMDTMO | MSDC_INT_RSPCRCERR)) {
+-		sm.last_stage = "cmd-status";
+-		kprintf("ANGELICA MSDC: CMD%u error int=0x%x\n", opcode, ints);
+-		return EIO;
+-	}
+-	if (resp) {
+-		*resp = msdc_rd(SDC_RESP0);
++		if (resp) {
++			*resp = msdc_rd(SDC_RESP0);
++		}
++		sm.last_stage = "cmd-done";
++		return 0;
+ 	}
+-	sm.last_stage = "cmd-done";
+-	return 0;
++	return EIO;
+ }
+ 
+ static void
+@@ -450,21 +474,86 @@
+ 	sm.width = width;
+ }
+ 
++/*
++ * One-sided sampling edge control, modelled on
++ * drivers/mmc/host/mediatek/ComboA/sd.c msdc_set_smpl(): clock_mode 0 only.
++ * edges are 0 (rising) or 1 (falling).
++ */
++static void
++msdc_set_smpl(uint32_t clock_mode, uint8_t cmd_edge, uint8_t rdata_edge,
++    uint8_t wdata_edge)
++{
++	uint32_t iocon = msdc_rd(MSDC_IOCON);
++	uint32_t pb0, pb2;
++
++	if (clock_mode != 0) {
++		return;
++	}
++	if (cmd_edge <= 1) {
++		iocon &= ~MSDC_IOCON_RSPL;
++		iocon |= (uint32_t)cmd_edge << 1;
++	}
++	iocon &= ~MSDC_IOCON_R_D_SMPL_SEL;
++	msdc_wr(MSDC_IOCON, iocon);
++	if (rdata_edge <= 1) {
++		pb0 = msdc_rd(MSDC_PATCH_BIT0);
++		pb0 &= ~MSDC_PB0_RD_DAT_SEL;
++		pb0 |= (uint32_t)rdata_edge << 3;
++		msdc_wr(MSDC_PATCH_BIT0, pb0);
++	}
++	if (wdata_edge <= 1) {
++		pb2 = msdc_rd(MSDC_PATCH_BIT2);
++		pb2 &= ~MSDC_PB2_CFGCRCSTSEDGE;
++		pb2 |= (uint32_t)wdata_edge << 25;
++		msdc_wr(MSDC_PATCH_BIT2, pb2);
++	}
++}
++
++/*
++ * Clock programming following drivers/mmc/host/mediatek/ComboA/sd.c
++ * msdc_set_mclk(): mode 0 = CKDIV divisor (sclk = hclk / (4 * div) when
++ * div != 0, sclk = hclk / 2 when div == 0 and hz >= hclk / 2), mode 1 =
++ * no divisor (sclk = hclk).
++ */
+ static int
+-msdc_set_clock(uint32_t div)
++msdc_set_mclk(uint64_t hz)
+ {
+-	uint32_t cfg = msdc_rd(MSDC_CFG);
++	uint32_t cfg, mode, div;
++	uint64_t hclk = MSDC_HCLK_HZ;
+ 
++	if (hz == 0) {
++		msdc_wr(MSDC_CFG, msdc_rd(MSDC_CFG) | MSDC_CFG_CKPDN);
++		sm.sclk_hz = 0;
++		return 0;
++	}
++	if (hz > hclk) {
++		hz = hclk;
++	}
++	if (hz >= hclk) {
++		mode = 0x1;
++		div = 0;
++	} else if (hz >= (hclk >> 1)) {
++		mode = 0x0;
++		div = 0;
++	} else {
++		mode = 0x0;
++		div = (uint32_t)((hclk + ((hz << 2) - 1)) / (hz << 2));
++	}
++
++	cfg = msdc_rd(MSDC_CFG);
+ 	cfg &= ~(MSDC_CFG_CKMOD | MSDC_CFG_CKMOD_HS400 | MSDC_CFG_SCLK_STOP_DDR);
+-	cfg = (cfg & ~MSDC_CFG_CKDIV) | ((div & 0xfffu) << 8);
++	cfg = (cfg & ~MSDC_CFG_CKDIV) | ((div & 0xfffu) << 8) | ((mode & 0x3u) << 20);
+ 	msdc_wr(MSDC_CFG, cfg);
+-	for (uint32_t i = 0; !(msdc_rd(MSDC_CFG) & MSDC_CFG_CKSTB) && i < 1000; i++) {
++	for (uint32_t i = 0; !(msdc_rd(MSDC_CFG) & MSDC_CFG_CKSTB) && i < 1000;
++	    i++) {
+ 		delay(1);
+ 	}
+ 	if (!(msdc_rd(MSDC_CFG) & MSDC_CFG_CKSTB)) {
+ 		return ETIMEDOUT;
+ 	}
+ 	sm.clock_div = div;
++	sm.sclk_hz = (mode == 0x1) ? hclk :
++	    ((div == 0) ? (hclk >> 1) : ((hclk >> 2) / div));
+ 	return 0;
+ }
+ 
+@@ -500,12 +589,8 @@
+ static int
+ msdc_xfer(uint64_t lba, uint32_t blocks, uint8_t *buf, addr64_t paddr)
+ {
+-	uint64_t deadline = msdc_deadline(CMD_TIMEOUT_NS);
+-	uint32_t resp = 0;
+-	uint32_t cfg, ctrl, ints;
+ 	uint32_t len = blocks * MSDC_BLOCK;
+ 	bool multi = blocks > 1;
+-	bool cmd_ok = false;
+ 	int error;
+ 	proc_t p = current_proc();
+ 
+@@ -515,87 +600,103 @@
+ 	msdc_io_blocks = blocks;
+ 	msdc_io_start = mach_absolute_time();
+ 
+-	sm.last_stage = "xfer-start";
+-	msdc_dma_stop();
+-	sm.last_stage = "dma-stop";
+-	msdc_wr(MSDC_DMA_CFG, 0);
+-	msdc_wr(MSDC_FIFOCS, MSDC_FIFOCS_CLR);
+-	for (uint32_t i = 0; (msdc_rd(MSDC_FIFOCS) & MSDC_FIFOCS_CLR) && i < 100; i++) {
+-		delay(1);
+-	}
+-
+-	/* PIO is documented as SDIO-only; card block transfers must use DMA. */
+-	cfg = msdc_rd(MSDC_CFG);
+-	msdc_wr(MSDC_CFG, cfg & ~MSDC_CFG_PIO);
+-	msdc_wr(SDC_BLK_NUM, blocks);
+-
+-	sm.last_stage = "cmd";
+-	error = msdc_cmd(multi ? 18 : 17, (uint32_t)lba, 1, multi ? 2 : 1, &resp);
+-	if (error) {
+-		goto out;
+-	}
+-	if (resp & (R1_OUT_OF_RANGE | R1_ERROR)) {
+-		kprintf("ANGELICA MSDC: CMD%u %llu status 0x%x\n",
+-		    multi ? 18 : 17, (unsigned long long)lba, resp);
+-		error = EIO;
+-		goto out;
+-	}
+-	cmd_ok = true;
+-
+-	if (paddr == 0) {
+-		kprintf("ANGELICA MSDC: no DMA address for block buffer\n");
+-		error = EIO;
+-		goto out;
+-	}
+-
+-	flush_dcache((vm_offset_t)buf, len, FALSE);
+-	msdc_wr(MSDC_DMA_SA_HIGH, (uint32_t)((paddr >> 32) & MSDC_DMA_SA_HIGH_MASK));
+-	msdc_wr(MSDC_DMA_SA, (uint32_t)paddr);
+-	msdc_wr(MSDC_DMA_LEN, len);
+-	ctrl = MSDC_DMA_CTRL_LASTBUF | MSDC_DMA_BRUST_64B;
+-	msdc_wr(MSDC_DMA_CTRL, ctrl);
+-	msdc_wr(MSDC_DMA_CTRL, ctrl | MSDC_DMA_CTRL_START);
+-
+-	sm.last_stage = "data-dma";
+-	for (;;) {
+-		ints = msdc_rd(MSDC_INT) & MSDC_INT_DATAMASK;
+-		if (ints) {
+-			msdc_wr(MSDC_INT, ints);
+-		}
+-		if (ints & (MSDC_INT_DATTMO | MSDC_INT_DATCRCERR)) {
+-			sm.last_stage = "data-dma-error";
+-			kprintf("ANGELICA MSDC: CMD%u %llu DMA error int=0x%x\n",
+-			    multi ? 18 : 17, (unsigned long long)lba, ints);
+-			error = EIO;
++	for (uint32_t attempt = 0; attempt < MSDC_RETRY_COUNT; attempt++) {
++		uint64_t deadline = msdc_deadline(CMD_TIMEOUT_NS);
++		uint32_t resp = 0;
++		uint32_t cfg, ctrl, ints;
++		bool cmd_ok = false;
++
++		sm.last_stage = "xfer-start";
++		msdc_dma_stop();
++		sm.last_stage = "dma-stop";
++		msdc_wr(MSDC_DMA_CFG, 0);
++		msdc_wr(MSDC_FIFOCS, MSDC_FIFOCS_CLR);
++		for (uint32_t i = 0;
++		    (msdc_rd(MSDC_FIFOCS) & MSDC_FIFOCS_CLR) && i < 100; i++) {
++			delay(1);
++		}
++
++		/* PIO is documented as SDIO-only; card block transfers must use DMA. */
++		cfg = msdc_rd(MSDC_CFG);
++		msdc_wr(MSDC_CFG, cfg & ~MSDC_CFG_PIO);
++		msdc_wr(SDC_BLK_NUM, blocks);
++
++		sm.last_stage = "cmd";
++		error = msdc_cmd(multi ? 18 : 17, (uint32_t)lba, 1,
++		    multi ? 2 : 1, &resp);
++		if (error) {
+ 			break;
+ 		}
+-		if (ints & MSDC_INT_XFER_COMPL) {
+-			error = 0;
++		if (resp & (R1_OUT_OF_RANGE | R1_ERROR)) {
++			kprintf("ANGELICA MSDC: CMD%u %llu status 0x%x\n",
++			    multi ? 18 : 17, (unsigned long long)lba, resp);
++			error = EIO;
+ 			break;
+ 		}
+-		if (mach_absolute_time() > deadline) {
+-			sm.last_stage = "data-dma-timeout";
+-			kprintf("ANGELICA MSDC: CMD%u %llu DMA timeout int=0x%x dma=0x%x\n",
+-			    multi ? 18 : 17, (unsigned long long)lba,
+-			    msdc_rd(MSDC_INT), msdc_rd(MSDC_DMA_CFG));
+-			error = ETIMEDOUT;
++		cmd_ok = true;
++
++		if (paddr == 0) {
++			kprintf("ANGELICA MSDC: no DMA address for block buffer\n");
++			error = EIO;
+ 			break;
+ 		}
+-		delay(1);
+-	}
+ 
+-	sm.last_stage = "dma-stop2";
+-	msdc_dma_stop();
+-	msdc_wr(MSDC_INT, MSDC_INT_DATAMASK);
+-	if (error == 0) {
+ 		flush_dcache((vm_offset_t)buf, len, FALSE);
+-	}
+-	if (multi && cmd_ok) {
+-		sm.last_stage = "cmd12";
+-		msdc_stop_transfer();
++		msdc_wr(MSDC_DMA_SA_HIGH,
++		    (uint32_t)((paddr >> 32) & MSDC_DMA_SA_HIGH_MASK));
++		msdc_wr(MSDC_DMA_SA, (uint32_t)paddr);
++		msdc_wr(MSDC_DMA_LEN, len);
++		ctrl = MSDC_DMA_CTRL_LASTBUF | MSDC_DMA_BRUST_64B;
++		msdc_wr(MSDC_DMA_CTRL, ctrl);
++		msdc_wr(MSDC_DMA_CTRL, ctrl | MSDC_DMA_CTRL_START);
++
++		sm.last_stage = "data-dma";
++		for (;;) {
++			ints = msdc_rd(MSDC_INT) & MSDC_INT_DATAMASK;
++			if (ints) {
++				msdc_wr(MSDC_INT, ints);
++			}
++			if (ints & (MSDC_INT_DATTMO | MSDC_INT_DATCRCERR)) {
++				sm.last_stage = "data-dma-error";
++				kprintf("ANGELICA MSDC: CMD%u %llu DMA error int=0x%x attempt %u\n",
++				    multi ? 18 : 17, (unsigned long long)lba, ints,
++				    attempt);
++				error = EIO;
++				break;
++			}
++			if (ints & MSDC_INT_XFER_COMPL) {
++				error = 0;
++				break;
++			}
++			if (mach_absolute_time() > deadline) {
++				sm.last_stage = "data-dma-timeout";
++				kprintf("ANGELICA MSDC: CMD%u %llu DMA timeout int=0x%x dma=0x%x attempt %u\n",
++				    multi ? 18 : 17, (unsigned long long)lba,
++				    msdc_rd(MSDC_INT), msdc_rd(MSDC_DMA_CFG), attempt);
++				error = ETIMEDOUT;
++				break;
++			}
++			delay(1);
++		}
++
++		sm.last_stage = "dma-stop2";
++		msdc_dma_stop();
++		msdc_wr(MSDC_INT, MSDC_INT_DATAMASK);
++		if (error == 0) {
++			flush_dcache((vm_offset_t)buf, len, FALSE);
++			if (multi && cmd_ok) {
++				sm.last_stage = "cmd12";
++				msdc_stop_transfer();
++			}
++			break;
++		}
++		if (multi && cmd_ok) {
++			/* stop the transfer before retrying */
++			msdc_stop_transfer();
++		}
++		/* fall through: retry the whole transfer */
+ 	}
+ 
+-out:
+ 	msdc_io_tid = 0;
+ 	msdc_io_pid = 0;
+ 	msdc_io_blocks = 0;
+@@ -664,9 +765,12 @@
+ 	cfg &= ~(MSDC_CFG_CKMOD | MSDC_CFG_CKMOD_HS400 | MSDC_CFG_SCLK_STOP_DDR);
+ 	cfg |= MSDC_CFG_PIO;
+ 	cfg &= ~MSDC_CFG_CKPDN;
+-	cfg = (cfg & ~MSDC_CFG_CKDIV) | (MSDC_SLOW_DIV << 8);
++	cfg |= MSDC_CFG_MODE;
+ 	msdc_wr(MSDC_CFG, cfg);
+-	sm.clock_div = MSDC_SLOW_DIV;
++	sm.clock_div = 0;
++	if (msdc_set_mclk(MSDC_INIT_HZ) != 0) {
++		return ETIMEDOUT;
++	}
+ 	kprintf("ANGELICA MSDC: cfg written, waiting clock\n");
+ 	for (uint32_t i = 0; !(msdc_rd(MSDC_CFG) & MSDC_CFG_CKSTB) && i < 100; i++) {
+ 		delay(1);
+@@ -1036,7 +1140,10 @@
+ 	uintptr_t const *reg = NULL;
+ 	unsigned int size = 0;
+ 	char want[64] = "userdata";
+-	uint32_t fast = 1, multi = 1, width = 4, div = MSDC_FAST_DIV;
++	uint32_t fast = 1, multi = 1, width = 1, div = 0;
++	uint64_t clk = MSDC_DEFAULT_HZ;
++	uint32_t cmd_edge = 0, rdata_edge = 0, wdata_edge = 0;
++	uint32_t cfg;
+ 	int error;
+ 
+ 	kprintf("ANGELICA MSDC: init enter\n");
+@@ -1050,16 +1157,18 @@
+ 	PE_parse_boot_argn("angelicamsdcfast", &fast, sizeof(fast));
+ 	PE_parse_boot_argn("angelicamsdcmulti", &multi, sizeof(multi));
+ 	PE_parse_boot_argn("angelicamsdcwidth", &width, sizeof(width));
++	PE_parse_boot_argn("angelicamsdcclk", &clk, sizeof(clk));
+ 	PE_parse_boot_argn("angelicamsdcdiv", &div, sizeof(div));
++	PE_parse_boot_argn("angelicamscmd_edge", &cmd_edge, sizeof(cmd_edge));
++	PE_parse_boot_argn("angelicamsdrdata_edge", &rdata_edge, sizeof(rdata_edge));
++	PE_parse_boot_argn("angelicamdswdata_edge", &wdata_edge, sizeof(wdata_edge));
+ 	if (fast == 0) {
+ 		width = 1;
+-		div = MSDC_SLOW_DIV;
++		clk = MSDC_INIT_HZ;
++		div = 0;
+ 	} else if (width != 1 && width != 4 && width != 8) {
+ 		width = 4;
+ 	}
+-	if (div == 0) {
+-		div = MSDC_FAST_DIV;
+-	}
+ 
+ 	kprintf("ANGELICA MSDC: mapping reg %p size 0x%x\n", (void *)reg[0], (unsigned)reg[1]);
+ 	sm.regs = ml_io_map(reg[0], reg[1]);
+@@ -1071,9 +1180,13 @@
+ 	sm.bounce = msdc_bounce_static;
+ 	sm.bounce_size = sm.bounce != NULL ? MSDC_BOUNCE_SIZE : MSDC_BLOCK;
+ 	sm.multi = multi != 0 && sm.bounce != NULL;
+-	kprintf("ANGELICA MSDC: bounce %p pa 0x%llx size 0x%x multi %d fast %u width %u div 0x%x\n",
++	sm.cmd_edge = cmd_edge;
++	sm.rdata_edge = rdata_edge;
++	sm.wdata_edge = wdata_edge;
++	kprintf("ANGELICA MSDC: bounce %p pa 0x%llx size 0x%x multi %d fast %u width %u clk %llu div 0x%x edges %u/%u/%u\n",
+ 	    sm.bounce, (unsigned long long)sm.dma_pa, sm.bounce_size,
+-	    sm.multi ? 1 : 0, fast, width, div);
++	    sm.multi ? 1 : 0, fast, width, (unsigned long long)clk, div,
++	    cmd_edge, rdata_edge, wdata_edge);
+ 
+ 	kprintf("ANGELICA MSDC: locking\n");
+ 	msdc_lock_acquire();
+@@ -1093,9 +1206,27 @@
+ 			    width, error, sm.width);
+ 		}
+ 		if (error == 0) {
+-			error = msdc_set_clock(div);
+-			kprintf("ANGELICA MSDC: fast clock div 0x%x returned %d\n",
+-			    div, error);
++			if (div != 0) {
++				/* raw CKDIV override, mode 0, for diagnostics */
++				cfg = msdc_rd(MSDC_CFG);
++				cfg &= ~(MSDC_CFG_CKMOD | MSDC_CFG_CKMOD_HS400 |
++				    MSDC_CFG_SCLK_STOP_DDR);
++				cfg &= ~MSDC_CFG_CKDIV;
++				cfg |= (div & 0xfffu) << 8;
++				msdc_wr(MSDC_CFG, cfg);
++				sm.clock_div = div;
++				sm.sclk_hz = ((MSDC_HCLK_HZ >> 2) / div);
++			} else {
++				error = msdc_set_mclk(clk);
++			}
++			kprintf("ANGELICA MSDC: op clock sclk %llu returned %d width %u\n",
++			    (unsigned long long)sm.sclk_hz, error, sm.width);
++		}
++		if (error == 0) {
++			/* sampling edges: 0 = rising, 1 = falling */
++			msdc_set_smpl(0, cmd_edge, rdata_edge, wdata_edge);
++			kprintf("ANGELICA MSDC: smpl edges cmd %u rdata %u wdata %u\n",
++			    cmd_edge, rdata_edge, wdata_edge);
+ 		}
+ 	}
+ 	if (error == 0) {
