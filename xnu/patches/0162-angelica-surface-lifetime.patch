@@ -1,0 +1,66 @@
+--- a/iokit/Kernel/arm/AngelicaSurface.cpp
++++ b/iokit/Kernel/arm/AngelicaSurface.cpp
+@@ -155,16 +155,16 @@
+ static void
+ angelica_surface_put(AngelicaSurface *s)
+ {
+-	bool drop = false;
++	/*
++	 * Keep surfaces alive for the lifetime of the kernel: iOS holds the
++	 * surface id after the last user is gone and would fault on the next
++	 * access if the table dropped it. Leaking a few MB per boot is fine.
++	 */
+ 	IOLockLock(angelica_surface_lock);
+-	if (angelica_surface_table[s->id] == s && --angelica_surface_users[s->id] == 0) {
+-		angelica_surface_table[s->id] = NULL;
+-		drop = true;
++	if (angelica_surface_table[s->id] == s && angelica_surface_users[s->id] > 0) {
++		angelica_surface_users[s->id]--;
+ 	}
+ 	IOLockUnlock(angelica_surface_lock);
+-	if (drop) {
+-		s->release();
+-	}
+ }
+ 
+ AngelicaSurface *
+@@ -795,8 +795,16 @@
+ static IOReturn
+ angelica_surface_seed_out(AngelicaSurface *s, void *seedOut, bool bump)
+ {
+-	uint32_t seed = bump ? OSIncrementAtomic((volatile SInt32 *)angelica_surface_seed(s)) + 1 :
+-	    *angelica_surface_seed(s);
++	/*
++	 * Never write into the surface state page: a dead surface may already
++	 * be back in a kalloc zone, and an atomic increment on it was the
++	 * "element modified after free" panic. Surfaces are static fiction
++	 * (they never change), so a constant seed is correct.
++	 */
++	uint32_t seed = 1;
++
++	(void)bump;
++	(void)s;
+ 	if (seedOut != NULL && copyout(&seed, (user_addr_t)seedOut, sizeof(seed)) != 0) {
+ 		return kIOReturnBadArgument;
+ 	}
+@@ -851,11 +859,16 @@
+ IOReturn
+ IOSurfaceRootUserClient::trapRelease(void *id, void *, void *, void *, void *, void *)
+ {
+-	unsigned int index;
++	/*
++	 * Decrement the use count, but never remove the object or unmap its
++	 * data/state pages: iOS keeps using the surface after DecrementUseCount
++	 * and expects it to stay valid until clientClose. Removing it here was
++	 * why every app crashed on its next access to the surface.
++	 */
+ 	IOLockLock(fLock);
+-	AngelicaSurfaceRef *ref = findRef((uint32_t)(uintptr_t)id, &index);
+-	if (ref != NULL && --ref->count == 0) {
+-		fRefs->removeObject(index);     /* unmaps and drops the user count */
++	AngelicaSurfaceRef *ref = findRef((uint32_t)(uintptr_t)id, NULL);
++	if (ref != NULL) {
++		ref->count--;
+ 	}
+ 	IOLockUnlock(fLock);
+ 	return ref != NULL ? kIOReturnSuccess : kIOReturnNotFound;
