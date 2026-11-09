@@ -1,5 +1,14 @@
 --- a/bsd/dev/angelica_usb.c
 +++ b/bsd/dev/angelica_usb.c
+@@ -31,7 +31,7 @@
+ void angelica_usb_probe(void);
+ static void
+ angelica_usb_gadget_start(vm_offset_t musb);
+-void angelica_usb_panic_log(void);
++void angelica_usb_panic_log(const char *message, const char *panic_text);
+ 
+ 
+ #define MUSB_PA                 0x11200000
 @@ -1594,6 +1594,10 @@
  extern char *debug_buf_base;
  extern char *debug_buf_ptr;
