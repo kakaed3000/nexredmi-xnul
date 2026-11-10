@@ -1,6 +1,19 @@
 --- a/iokit/Kernel/arm/AngelicaSurface.cpp
 +++ b/iokit/Kernel/arm/AngelicaSurface.cpp
-@@ -155,16 +155,16 @@
+@@ -104,12 +104,6 @@
+ 	return kernelMap != NULL ? (uintptr_t)kernelMap->getVirtualAddress() : 0;
+ }
+ 
+-static uint32_t *
+-angelica_surface_seed(AngelicaSurface *s)
+-{
+-	return (uint32_t *)((uint8_t *)s->state->getBytesNoCopy() + ANGELICA_SURFACE_STATE_SEED);
+-}
+-
+ /*
+  * Give the surface an id and a table slot; the table holds one retain and a
+  * user count (creators, client mappings, kernel holders). Lock held.
+@@ -155,16 +149,16 @@
  static void
  angelica_surface_put(AngelicaSurface *s)
  {
@@ -24,7 +37,7 @@
  }
  
  AngelicaSurface *
-@@ -795,8 +795,16 @@
+@@ -795,8 +789,16 @@
  static IOReturn
  angelica_surface_seed_out(AngelicaSurface *s, void *seedOut, bool bump)
  {
@@ -43,7 +56,7 @@
  	if (seedOut != NULL && copyout(&seed, (user_addr_t)seedOut, sizeof(seed)) != 0) {
  		return kIOReturnBadArgument;
  	}
-@@ -851,11 +859,16 @@
+@@ -851,11 +853,16 @@
  IOReturn
  IOSurfaceRootUserClient::trapRelease(void *id, void *, void *, void *, void *, void *)
  {
