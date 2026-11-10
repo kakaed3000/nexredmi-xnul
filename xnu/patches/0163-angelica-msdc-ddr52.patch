@@ -42,7 +42,7 @@
  #define R1B_RSPTYP          7u
  
  /* R1 card status: OUT_OF_RANGE and ERROR are fatal for a READ. */
-@@ -510,6 +534,100 @@
+@@ -510,6 +534,102 @@
  }
  
  /*
@@ -53,6 +53,8 @@
 + * side requires HS_TIMING=1 (CMD6 index 185) and BUS_WIDTH=6 (CMD6 index
 + * 183, 8-bit DDR); both are legal at the current I/O voltage.
 + */
++static int msdc_set_mclk(uint64_t hz);
++
 +static int
 +msdc_set_ddr52(uint64_t hz)
 +{
@@ -143,7 +145,7 @@
   * Clock programming following drivers/mmc/host/mediatek/ComboA/sd.c
   * msdc_set_mclk(): mode 0 = CKDIV divisor (sclk = hclk / (4 * div) when
   * div != 0, sclk = hclk / 2 when div == 0 and hz >= hclk / 2), mode 1 =
-@@ -1143,6 +1261,8 @@
+@@ -1143,6 +1263,8 @@
  	uint32_t fast = 1, multi = 1, width = 1, div = 0;
  	uint64_t clk = MSDC_DEFAULT_HZ;
  	uint32_t cmd_edge = 0, rdata_edge = 0, wdata_edge = 0;
@@ -152,7 +154,7 @@
  	uint32_t cfg;
  	int error;
  
-@@ -1162,6 +1282,8 @@
+@@ -1162,6 +1284,8 @@
  	PE_parse_boot_argn("angelicamscmd_edge", &cmd_edge, sizeof(cmd_edge));
  	PE_parse_boot_argn("angelicamsdrdata_edge", &rdata_edge, sizeof(rdata_edge));
  	PE_parse_boot_argn("angelicamdswdata_edge", &wdata_edge, sizeof(wdata_edge));
@@ -161,7 +163,7 @@
  	if (fast == 0) {
  		width = 1;
  		clk = MSDC_INIT_HZ;
-@@ -1183,10 +1305,10 @@
+@@ -1183,10 +1307,10 @@
  	sm.cmd_edge = cmd_edge;
  	sm.rdata_edge = rdata_edge;
  	sm.wdata_edge = wdata_edge;
@@ -174,7 +176,7 @@
  
  	kprintf("ANGELICA MSDC: locking\n");
  	msdc_lock_acquire();
-@@ -1228,6 +1350,10 @@
+@@ -1228,6 +1352,10 @@
  			kprintf("ANGELICA MSDC: smpl edges cmd %u rdata %u wdata %u\n",
  			    cmd_edge, rdata_edge, wdata_edge);
  		}
