@@ -1,0 +1,187 @@
+--- a/bsd/dev/angelica_msdc.c
++++ b/bsd/dev/angelica_msdc.c
+@@ -6,7 +6,11 @@
+  * bounce buffer.  Read requests are retried up to MSDC_RETRY_COUNT times on
+  * CRC/timeout errors; sampling-edge tuning via MSDC_IOCON is available from
+  * boot-args (angelicamscmd_edge/angelicamsdrdata_edge/angelicamdswdata_edge,
+- * 0 = rising, 1 = falling).  Finds one GPT partition by name (boot-arg
++ * 0 = rising, 1 = falling).  angelicamscdcddr=1 switches the card to 8-bit
++ * DDR52 (HS_TIMING=1 + BUS_WIDTH=6, DDR mode with divisor, reference register
++ * pattern) and angelicamscdcddrclk sets the DDR clock (default 52 MHz);
++ * cards that reject the switch fall back to the plain fast path and
++ * ultimately to slow-mode root.  Finds one GPT partition by name (boot-arg
+  * msdcroot=, default "userdata") and exposes it as the BSD disk msdcroot0
+  * (rmsdcroot0), with 512-byte logical sectors. Root on it with rd=msdcroot0.
+  * Writes are refused.
+@@ -112,8 +116,28 @@
+ #define MSDC_DEFAULT_HZ     26000000ull
+ #define MSDC_INIT_HZ        260000ull
+ #define MSDC_RETRY_COUNT    3
++#define MSDC_DDR_CLK_HZ     52000000ull       /* DDR52: 52 MHz clock */
++#define MSDC_DDR_HS_TIMING  1u                /* EXT_CSD HS_TIMING: high speed */
++#define MSDC_DDR_BUS_WIDTH  6u                /* EXT_CSD BUS_WIDTH: 8-bit DDR */
++#define MSDC_EMMC50_CFG0    0x208
++#define MSDC_EMMC50_CFG_LK  0x000e8882u        /* LK-style tx skew delays */
++
++#define MSDC_PB0_EN_STBIT_CHKSUP (1u << 0)
++#define MSDC_PB0_EN_8BITSUP   (1u << 1)
++#define MSDC_PB0_DIS_RECMDWR  (1u << 2)
++#define MSDC_PB0_SDC_BSYDLY   (0xfu << 18)
++#define MSDC_PB0_DETWR_CRCTMO (1u << 30)
++
++#define MSDC_PB2_ENHANCEGPD   (1u << 0)
++#define MSDC_PB2_RESPWAITCNT  (3u << 2)
++#define MSDC_PB2_INTCRESPSEL  (1u << 11)
++#define MSDC_PB2_CFGRESPCNT   (1u << 12)
++#define MSDC_PB2_DDR50SEL     (1u << 19)
++#define MSDC_PB2_POPENCNT     (1u << 22)
++#define MSDC_PB2_CFG_CRCSTS_SEL (1u << 24)
+ 
+ #define EXT_CSD_BUS_WIDTH   183u
++#define EXT_CSD_HS_TIMING   185u
+ #define R1B_RSPTYP          7u
+ 
+ /* R1 card status: OUT_OF_RANGE and ERROR are fatal for a READ. */
+@@ -510,6 +534,100 @@
+ }
+ 
+ /*
++ * Switch the card into 8-bit DDR52 (high speed timing, DDR bus width) and
++ * the host into the same DDR configuration the bootloader uses: MSDC_CFG
++ * CKMOD=2 (DDR mode with divisor), 8-bit SDC_CFG, CLK-pin busy delay,
++ * DDR50SEL and CRC-status latch from the reference register dump.  Card
++ * side requires HS_TIMING=1 (CMD6 index 185) and BUS_WIDTH=6 (CMD6 index
++ * 183, 8-bit DDR); both are legal at the current I/O voltage.
++ */
++static int
++msdc_set_ddr52(uint64_t hz)
++{
++	uint32_t arg, cfg, pb0, pb2, resp;
++	int error;
++
++	/* 1. card: high speed (52 MHz) timing */
++	arg = (MSDC_SWITCH_WRITE << 24) | (EXT_CSD_HS_TIMING << 16) |
++	    (MSDC_DDR_HS_TIMING << 8);
++	error = msdc_cmd(6, arg, R1B_RSPTYP, 0, &resp);
++	if (error) {
++		return error;
++	}
++	if (resp & (R1_OUT_OF_RANGE | R1_ERROR)) {
++		kprintf("ANGELICA MSDC: CMD6 HS_TIMING status 0x%x\n", resp);
++		return EIO;
++	}
++	error = msdc_wait_ready();
++	if (error) {
++		return error;
++	}
++
++	/* 2. card: 8-bit DDR bus width */
++	arg = (MSDC_SWITCH_WRITE << 24) | (EXT_CSD_BUS_WIDTH << 16) |
++	    (MSDC_DDR_BUS_WIDTH << 8);
++	error = msdc_cmd(6, arg, R1B_RSPTYP, 0, &resp);
++	if (error) {
++		return error;
++	}
++	if (resp & (R1_OUT_OF_RANGE | R1_ERROR)) {
++		kprintf("ANGELICA MSDC: CMD6 BUS_WIDTH status 0x%x\n", resp);
++		return EIO;
++	}
++	error = msdc_wait_ready();
++	if (error) {
++		return error;
++	}
++
++	/* 3. host: 8-bit */
++	cfg = msdc_rd(SDC_CFG);
++	cfg = (cfg & ~SDC_CFG_BUSWIDTH) | (2u << 16);
++	msdc_wr(SDC_CFG, cfg);
++	sm.width = 8;
++
++	/* 4. host: patch bits from the reference (LK) register dump */
++	pb0 = msdc_rd(MSDC_PATCH_BIT0);
++	pb0 |= MSDC_PB0_EN_STBIT_CHKSUP | MSDC_PB0_EN_8BITSUP |
++	    MSDC_PB0_DIS_RECMDWR | MSDC_PB0_SDC_BSYDLY | MSDC_PB0_DETWR_CRCTMO;
++	pb0 &= ~MSDC_PB0_RD_DAT_SEL;
++	msdc_wr(MSDC_PATCH_BIT0, pb0);
++	pb2 = msdc_rd(MSDC_PATCH_BIT2);
++	pb2 |= MSDC_PB2_ENHANCEGPD | MSDC_PB2_RESPWAITCNT |
++	    MSDC_PB2_INTCRESPSEL | MSDC_PB2_CFGRESPCNT |
++	    MSDC_PB2_DDR50SEL | MSDC_PB2_POPENCNT |
++	    MSDC_PB2_CFG_CRCSTS_SEL | MSDC_PB2_CFGCRCSTSEDGE;
++	msdc_wr(MSDC_PATCH_BIT2, pb2);
++
++	/* 5. host: command/response transmission delay compensation */
++	msdc_wr(MSDC_EMMC50_CFG0, MSDC_EMMC50_CFG_LK);
++
++	/* 6. clock: mode 0 divisor for the target rate, then CKMOD=2 (DDR) */
++	error = msdc_set_mclk(hz);
++	if (error) {
++		return error;
++	}
++	cfg = msdc_rd(MSDC_CFG);
++	cfg &= ~(MSDC_CFG_CKMOD | MSDC_CFG_CKMOD_HS400 | MSDC_CFG_SCLK_STOP_DDR);
++	cfg |= (0x2u << 20);          /* CKMOD: DDR with divisor */
++	msdc_wr(MSDC_CFG, cfg);
++	for (uint32_t i = 0; !(msdc_rd(MSDC_CFG) & MSDC_CFG_CKSTB) && i < 1000; i++) {
++		delay(1);
++	}
++	if (!(msdc_rd(MSDC_CFG) & MSDC_CFG_CKSTB)) {
++		sm.last_stage = "ddr-ckstb";
++		return ETIMEDOUT;
++	}
++	sm.sclk_hz = hz;
++	sm.last_stage = "ddr52-ok";
++	kprintf("ANGELICA MSDC: DDR52 ok sclk %llu width 8 cfg=0x%x sdc_cfg=0x%x "
++	    "pb0=0x%x pb2=0x%x emmc50_cfg0=0x%x\n",
++	    (unsigned long long)sm.sclk_hz, msdc_rd(MSDC_CFG), msdc_rd(SDC_CFG),
++	    msdc_rd(MSDC_PATCH_BIT0), msdc_rd(MSDC_PATCH_BIT2),
++	    msdc_rd(MSDC_EMMC50_CFG0));
++	return 0;
++}
++
++/*
+  * Clock programming following drivers/mmc/host/mediatek/ComboA/sd.c
+  * msdc_set_mclk(): mode 0 = CKDIV divisor (sclk = hclk / (4 * div) when
+  * div != 0, sclk = hclk / 2 when div == 0 and hz >= hclk / 2), mode 1 =
+@@ -1143,6 +1261,8 @@
+ 	uint32_t fast = 1, multi = 1, width = 1, div = 0;
+ 	uint64_t clk = MSDC_DEFAULT_HZ;
+ 	uint32_t cmd_edge = 0, rdata_edge = 0, wdata_edge = 0;
++	uint32_t ddr = 0;
++	uint64_t ddrclk = MSDC_DDR_CLK_HZ;
+ 	uint32_t cfg;
+ 	int error;
+ 
+@@ -1162,6 +1282,8 @@
+ 	PE_parse_boot_argn("angelicamscmd_edge", &cmd_edge, sizeof(cmd_edge));
+ 	PE_parse_boot_argn("angelicamsdrdata_edge", &rdata_edge, sizeof(rdata_edge));
+ 	PE_parse_boot_argn("angelicamdswdata_edge", &wdata_edge, sizeof(wdata_edge));
++	PE_parse_boot_argn("angelicamscdcddr", &ddr, sizeof(ddr));
++	PE_parse_boot_argn("angelicamscdcddrclk", &ddrclk, sizeof(ddrclk));
+ 	if (fast == 0) {
+ 		width = 1;
+ 		clk = MSDC_INIT_HZ;
+@@ -1183,10 +1305,10 @@
+ 	sm.cmd_edge = cmd_edge;
+ 	sm.rdata_edge = rdata_edge;
+ 	sm.wdata_edge = wdata_edge;
+-	kprintf("ANGELICA MSDC: bounce %p pa 0x%llx size 0x%x multi %d fast %u width %u clk %llu div 0x%x edges %u/%u/%u\n",
++	kprintf("ANGELICA MSDC: bounce %p pa 0x%llx size 0x%x multi %d fast %u width %u clk %llu div 0x%x edges %u/%u/%u ddr %u\n",
+ 	    sm.bounce, (unsigned long long)sm.dma_pa, sm.bounce_size,
+ 	    sm.multi ? 1 : 0, fast, width, (unsigned long long)clk, div,
+-	    cmd_edge, rdata_edge, wdata_edge);
++	    cmd_edge, rdata_edge, wdata_edge, ddr);
+ 
+ 	kprintf("ANGELICA MSDC: locking\n");
+ 	msdc_lock_acquire();
+@@ -1228,6 +1350,10 @@
+ 			kprintf("ANGELICA MSDC: smpl edges cmd %u rdata %u wdata %u\n",
+ 			    cmd_edge, rdata_edge, wdata_edge);
+ 		}
++		if (error == 0 && ddr != 0) {
++			error = msdc_set_ddr52(ddrclk);
++			kprintf("ANGELICA MSDC: ddr52 returned %d\n", error);
++		}
+ 	}
+ 	if (error == 0) {
+ 		error = msdc_find_partition(want);
