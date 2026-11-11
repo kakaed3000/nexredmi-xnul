@@ -1,0 +1,16 @@
+--- a/osfmk/vm/vm_compressor.c
++++ b/osfmk/vm/vm_compressor.c
+@@ -151,7 +151,12 @@
+ int     vm_compressor_mode = VM_PAGER_NOT_CONFIGURED;
+ #endif /* CONFIG_FREEZE */
+ 
+-#else /* !XNU_TARGET_OS_OSX */
++#elif defined(ARM64_BOARD_CONFIG_ANGELICA)
++/* ANGELICA: the stock 4K-hardware/16K-software page port decompressed
++ * pages with different bytes than the file, tripping code-page validation
++ * (Text page corruption / zalloc UAF). Keep the compressor disabled. */
++int             vm_compressor_mode = VM_PAGER_NOT_CONFIGURED;
++#else /* XNU_TARGET_OS_OSX, not angelica */
+ int             vm_compressor_mode = VM_PAGER_COMPRESSOR_WITH_SWAP;
+ 
+ #endif /* !XNU_TARGET_OS_OSX */
