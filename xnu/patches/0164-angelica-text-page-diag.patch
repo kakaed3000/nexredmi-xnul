@@ -1,0 +1,22 @@
+--- a/osfmk/vm/vm_fault.c
++++ b/osfmk/vm/vm_fault.c
+@@ -8001,6 +8001,19 @@
+ 		}
+ 	}
+ 
++	/* ANGELICA: dump the differing bytes so the corruption can be
++	 * attributed to a data structure / owner. */
++	for (uint32_t i = 0; i < (uint32_t)(size / sizeof(uint64_t)); i++) {
++		if (new_code_buffer[i] != old_code_buffer[i]) {
++			kprintf("ANGELICA vmtc: text page diff addr=%p size %lu diffs %u bitflip %d first_off 0x%x new 0x%016lx old 0x%016lx\n",
++			    (void *)vm_map_trunc_page(code_addr, size - 1),
++			    (unsigned long)size, diff_count, (int)bit_flip,
++			    i * 8U, (unsigned long long)new_code_buffer[i],
++			    (unsigned long long)old_code_buffer[i]);
++			break;
++		}
++	}
++
+ 	if (diff_count > 1) {
+ 		bit_flip = false;
+ 	}
