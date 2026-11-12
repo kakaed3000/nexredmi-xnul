@@ -1,0 +1,24 @@
+--- a/osfmk/vm/vm_fault.c
++++ b/osfmk/vm/vm_fault.c
+@@ -2528,6 +2528,12 @@
+ static TUNABLE(bool, panic_on_cs_killed, "panic_on_cs_killed",
+     PANIC_ON_CS_KILLED_DEFAULT);
+ 
++/* ANGELICA: allow code-signing validation to be bypassed for userland pages;
++ * useful on bring-up while our 4K-hardware-page port cannot yet validate
++ * every Swift-runtime page. Boot-arg: cs_bypass_boot=1 */
++static TUNABLE(bool, cs_bypass_boot, "cs_bypass_boot", false);
++#define ANGELICA_CS_BYPASS (cs_bypass_boot)
++
+ extern int proc_selfpid(void);
+ extern char *proc_name_address(void *p);
+ unsigned long cs_enter_tainted_rejected = 0;
+@@ -3628,7 +3634,7 @@
+ 	kern_return_t   kr;
+ 	bool            is_tainted = false;
+ 	vm_object_t     object;
+-	boolean_t       cs_bypass = fault_info->cs_bypass;
++	boolean_t       cs_bypass = fault_info->cs_bypass || ANGELICA_CS_BYPASS;
+ 
+ 	object = VM_PAGE_OBJECT(m);
+ 
