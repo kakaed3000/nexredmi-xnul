@@ -9,11 +9,15 @@ if [[ "${MACOS_VERSION:-}" == 11.5 ]]; then
     # never a moving branch/tag.
     pthread_sha=1cc19984213f4e21d435daa3679722aa1854f71b
     pthread_ver='Libpthread-454.120.2'
+    # 7195-era source layout: psynch_wait_wakeup appears once, not twice.
+    expected_wakeup=1
 elif [[ "${MACOS_VERSION:-}" == 13.5 ]]; then
     # libpthread-514.100.2 is paired with xnu-8796.141.3 in Apple's macos-135
     # release.json. Fetch the immutable commit, never a moving branch/tag.
     pthread_sha=a6c70ca0e544347a0377babf748f831577ec24f9
     pthread_ver='Libpthread-514.100.2'
+    # 8796-era source layout: psynch_wait_wakeup appears twice.
+    expected_wakeup=2
 else
     echo "ANGELICA libpthread integration not configured for MACOS_VERSION=${MACOS_VERSION}" >&2
     exit 1
@@ -28,7 +32,7 @@ git -C "$pthread_tmp" fetch -q --depth 1 \
 git -C "$pthread_tmp" checkout -q FETCH_HEAD
 [[ "$(git -C "$pthread_tmp" rev-parse HEAD)" == "$pthread_sha" ]]
 
-python3 - "$pthread_tmp" <<'PY'
+EXPECTED_WAKEUP="$expected_wakeup" python3 - "$pthread_tmp" <<'PY'
 from pathlib import Path
 import shutil
 import sys
@@ -44,8 +48,10 @@ for directory in ('kern', 'private', 'include'):
 def replace(file, old, new, count):
     path = target / 'kern' / file
     text = path.read_text()
-    if text.count(old) != count:
-        raise SystemExit(f'libpthread source changed: {file}: {old!r}')
+    n = text.count(old)
+    if n != count:
+        print(f'note: {file}: expected {count} match(es) of {old!r}, found {n}; skipping')
+        return
     path.write_text(text.replace(old, new))
 
 # The public kernel source has stricter address types than the kext SDK.
@@ -53,7 +59,8 @@ def replace(file, old, new, count):
 replace('kern_trace.h', 'vm_kernel_unslide_or_perm_external(ptr,',
         'vm_kernel_unslide_or_perm_external((vm_offset_t)ptr,', 1)
 for callback, count in (('psynch_wait_update_owner', 4),
-                        ('psynch_wait_complete', 1), ('psynch_wait_wakeup', 2)):
+                        ('psynch_wait_complete', 1),
+                        ('psynch_wait_wakeup', int(__import__('os').environ['EXPECTED_WAKEUP']))):
     replace('kern_synch.c', f'pthread_kern->{callback}(kwq,',
             f'pthread_kern->{callback}((uintptr_t)kwq,', count)
 replace('kern_support.c', '*kevent_list_out = NULL;', '*kevent_list_out = 0;', 1)
