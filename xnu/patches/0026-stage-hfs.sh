@@ -4,15 +4,23 @@
 set -euo pipefail
 
 [[ "${MACHINE_CONFIG:-}" == ANGELICA ]] || exit 0
-[[ "${MACOS_VERSION:-}" == 13.5 ]] || {
-    echo 'ANGELICA HFS integration requires xnu-8796.141.3 (macOS 13.5)' >&2
+if [[ "${MACOS_VERSION:-}" == 11.5 ]]; then
+    # hfs-556.100.11 is paired with xnu-7195.141.2 in Apple's macos-115
+    # release.json (iOS 15 / macOS Big Sur 11.5). Fetch the immutable commit,
+    # never a moving branch/tag.
+    hfs_sha=ba1a9cdc6e83ae9dfb61e4b5a822fbf185ae5866
+    hfs_ver='hfs-556.100.11'
+elif [[ "${MACOS_VERSION:-}" == 13.5 ]]; then
+    # hfs-627.100.6 is paired with xnu-8796.141.3 in Apple's macos-135
+    # release.json. Fetch the immutable commit, never a moving branch/tag.
+    hfs_sha=31d5ec238dfab485e78a9a30b8b92d13e8914f03
+    hfs_ver='hfs-627.100.6'
+else
+    echo "ANGELICA HFS integration not configured for MACOS_VERSION=${MACOS_VERSION}" >&2
     exit 1
-}
+fi
 [[ -f bsd/kern/bsd_init.c ]] || exit 1
 
-# hfs-627.100.6 is paired with xnu-8796.141.3 in Apple's macos-135
-# release.json. Fetch the immutable commit, never a moving branch/tag.
-hfs_sha=31d5ec238dfab485e78a9a30b8b92d13e8914f03
 hfs_tmp=$(mktemp -d)
 trap 'rm -rf "$hfs_tmp"' EXIT
 git init -q "$hfs_tmp"
@@ -52,4 +60,4 @@ PY
 # Kernel builds use -nostdinc; HFS's kext-config.h needs the SDK's target macros.
 hfs_sdk=$(xcrun --sdk macosx --show-sdk-path)
 cp "$hfs_sdk/usr/include/TargetConditionals.h" bsd/angelica_hfs/
-echo "Staged hfs-627.100.6 ($hfs_sha) for ANGELICA"
+echo "Staged $hfs_ver ($hfs_sha) for ANGELICA"
