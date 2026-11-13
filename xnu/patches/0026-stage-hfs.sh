@@ -4,12 +4,12 @@
 set -euo pipefail
 
 [[ "${MACHINE_CONFIG:-}" == ANGELICA ]] || exit 0
-if [[ "${MACOS_VERSION:-}" == 11.5 ]]; then
-    # hfs-556.100.11 is paired with xnu-7195.141.2 in Apple's macos-115
-    # release.json (iOS 15 / macOS Big Sur 11.5). Fetch the immutable commit,
-    # never a moving branch/tag.
-    hfs_sha=ba1a9cdc6e83ae9dfb61e4b5a822fbf185ae5866
-    hfs_ver='hfs-556.100.11'
+if [[ "${MACOS_VERSION:-}" == 12.1 ]]; then
+    # hfs-582.40.4 is paired with xnu-8019.41.5 in Apple's macos-1201
+    # release.json (Monterey 12.1 / iOS 15-era xnu-8019 family). Fetch the
+    # immutable commit, never a moving branch/tag.
+    hfs_sha=5e3008b69b8e4e893fb240d3a2f09dbdf7d3c0fb
+    hfs_ver='hfs-582.40.4'
 elif [[ "${MACOS_VERSION:-}" == 13.5 ]]; then
     # hfs-627.100.6 is paired with xnu-8796.141.3 in Apple's macos-135
     # release.json. Fetch the immutable commit, never a moving branch/tag.

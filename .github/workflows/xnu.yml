@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       macos_version:
-        description: macOS release whose xnu to build (11.5 = xnu-7195.141.2, iOS 15 era; 13.5 = xnu-8796, iOS 16 era)
-        default: "11.5"
+        description: macOS release whose xnu to build (12.1 = xnu-8019.41.5, iOS 15 era; 13.5 = xnu-8796, iOS 16 era)
+        default: "12.1"
       kernel_config:
         description: RELEASE / DEVELOPMENT / DEBUG
         default: DEVELOPMENT
@@ -28,7 +28,7 @@ concurrency:
 env:
   DXB_REPO: https://github.com/blacktop/darwin-xnu-build
   DXB_SHA: 663906528d1cd5ea8fde7de6f16de73db9511549
-  MACOS_VERSION: ${{ inputs.macos_version || '11.5' }}
+  MACOS_VERSION: ${{ inputs.macos_version || '12.1' }}
   KERNEL_CONFIG: ${{ inputs.kernel_config || 'DEVELOPMENT' }}
   MACHINE_CONFIG: ${{ inputs.machine_config || 'ANGELICA' }}
 
@@ -46,39 +46,40 @@ jobs:
           git init -q dxb
           git -C dxb fetch -q --depth 1 "$DXB_REPO" "$DXB_SHA"
           git -C dxb checkout -q FETCH_HEAD
-          # Big Sur 11.5 -> xnu-7195.141.2 (iOS 15 era). blacktop's build.sh only
-          # knows 12.5+, so inject an 11.5 case alongside the existing ones.
-          # The KDK itself is unavailable (Apple closed it; Dortania doesn't mirror
-          # Big Sur), so precreate a stub directory that lets the KDKROOT existence
-          # gate pass — all headers come from the macOS SDK in the Xcode runner.
+          # Monterey 12.1 -> xnu-8019.41.5 (iOS 15 era). blacktop's build.sh only
+          # knows 12.5+, so inject a 12.1 case alongside the existing ones. The KDK
+          # itself is unavailable for Big Sur/Monterey era releases (Apple closed the
+          # download; Dortania only mirrors a small subset), so precreate a stub
+          # directory that lets the KDKROOT existence gate pass — all headers come
+          # from the macOS SDK in the macos-15 Xcode toolchain.
           python3 - <<'PYEOF'
           path = 'dxb/build.sh'
           src = open(path).read()
           old = "    case ${MACOS_VERSION} in\n    '12.5')"
           new = ("    case ${MACOS_VERSION} in\n"
-                 "    '11.5')\n"
-                 "        RELEASE_URL='https://raw.githubusercontent.com/apple-oss-distributions/distribution-macOS/macos-115/release.json'\n"
-                 "        KDK_NAME='Kernel Debug Kit 11.5 (SkyDot)'\n"
-                 "        KDKROOT='/tmp/KDK-11.5'\n"
-                 "        RC_DARWIN_KERNEL_VERSION='22.0.0'\n"
+                 "    '12.1')\n"
+                 "        RELEASE_URL='https://raw.githubusercontent.com/apple-oss-distributions/distribution-macOS/macos-1201/release.json'\n"
+                 "        KDK_NAME='Kernel Debug Kit 12.1 (Monterey)'\n"
+                 "        KDKROOT='/tmp/KDK-12.1'\n"
+                 "        RC_DARWIN_KERNEL_VERSION='23.0.0'\n"
                  "        ;;\n"
                  "    '12.5')")
           assert src.count(old) == 1
           open(path, 'w').write(src.replace(old, new, 1))
           PYEOF
-          # Inject the 11.5 case in the patches() version allow-list (xnu-7195 needs
+          # Inject the 12.1 case in the patches() version allow-list (xnu-8019 needs
           # the main patches dir, same layout as 12.5-13.5).
           python3 - <<'PYEOF'
           path = 'dxb/build.sh'
           src = open(path).read()
           old = "        '12.5' | '13.0' | '13.1' | '13.2' | '13.3' | '13.4' | '13.5' | '14.0' | '14.1' | '14.2' | '14.3')"
-          new = "        '11.5' | '12.5' | '13.0' | '13.1' | '13.2' | '13.3' | '13.4' | '13.5' | '14.0' | '14.1' | '14.2' | '14.3')"
+          new = "        '11.5' | '12.1' | '12.5' | '13.0' | '13.1' | '13.2' | '13.3' | '13.4' | '13.5' | '14.0' | '14.1' | '14.2' | '14.3')"
           assert src.count(old) == 1
           open(path, 'w').write(src.replace(old, new, 1))
           PYEOF
           # Stub KDKROOT so the XNU build's KDK existence check passes; the actual
           # headers come from the macOS SDK in the macos-15 Xcode toolchain.
-          mkdir -p /tmp/KDK-11.5
+          mkdir -p /tmp/KDK-12.1
           # copy patches next to blacktop's
           cp xnu/patches/*.patch xnu/patches/*.sh dxb/patches/
           # libfirehose_kernel is built for the host default CPU (Apple M1, LSE

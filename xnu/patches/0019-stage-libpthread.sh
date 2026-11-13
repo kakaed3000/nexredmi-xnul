@@ -3,13 +3,13 @@
 set -euo pipefail
 
 [[ "${MACHINE_CONFIG:-}" == ANGELICA ]] || exit 0
-if [[ "${MACOS_VERSION:-}" == 11.5 ]]; then
-    # libpthread-454.120.2 is paired with xnu-7195.141.2 in Apple's macos-115
-    # release.json (iOS 15 / macOS Big Sur 11.5). Fetch the immutable commit,
-    # never a moving branch/tag.
-    pthread_sha=1cc19984213f4e21d435daa3679722aa1854f71b
-    pthread_ver='Libpthread-454.120.2'
-    # 7195-era source layout: psynch_wait_wakeup appears once, not twice.
+if [[ "${MACOS_VERSION:-}" == 12.1 ]]; then
+    # libpthread-485.40.4 is paired with xnu-8019.41.5 in Apple's macos-1201
+    # release.json (Monterey 12.1 / iOS 15-era xnu-8019 family). Fetch the
+    # immutable commit, never a moving branch/tag.
+    pthread_sha=e42795c13eaf5eb32ae06103b1b50caae3c01d27
+    pthread_ver='Libpthread-485.40.4'
+    # 8019-era source layout: psynch_wait_wakeup appears once (single call site).
     expected_wakeup=1
 elif [[ "${MACOS_VERSION:-}" == 13.5 ]]; then
     # libpthread-514.100.2 is paired with xnu-8796.141.3 in Apple's macos-135
