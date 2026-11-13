@@ -1,0 +1,22 @@
+--- a/osfmk/ipc/mach_port.c
++++ b/osfmk/ipc/mach_port.c
+@@ -2440,10 +2440,19 @@
+  *		None.
+  */
+ 
++/* ANGELICA: silence Mach port guard dispatch while bring-up; the boot arg
++ * guard_bypass_boot=1 makes this a no-op. Bring-up does not need to enforce
++ * XPC/AppX Mach port guards. */
++static TUNABLE(bool, guard_bypass_boot, "guard_bypass_boot", false);
++#define ANGELICA_GUARD_BYPASS (guard_bypass_boot)
++
+ void
+ mach_port_guard_ast(thread_t t,
+     mach_exception_data_type_t code, mach_exception_data_type_t subcode)
+ {
++	if (ANGELICA_GUARD_BYPASS) {
++		return;
++	}
+ 	unsigned int reason = EXC_GUARD_DECODE_GUARD_FLAVOR(code);
+ 	task_t task = get_threadtask(t);
+ 	unsigned int behavior = task->task_exc_guard;
