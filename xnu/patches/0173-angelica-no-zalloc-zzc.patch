@@ -1,0 +1,17 @@
+--- a/osfmk/kern/zalloc.c
++++ b/osfmk/kern/zalloc.c
+@@ -3063,6 +3063,14 @@
+ 	}
+ 	*counterp = zzc_rate - 1;
+ #endif /* !defined(__x86_64__) */
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	{
++		static TUNABLE(bool, zzc_skip, "zzc_skip", false);
++		if (zzc_skip) {
++			return true;
++		}
++	}
++#endif /* ARM64_BOARD_CONFIG_ANGELICA */
+ 	return false;
+ }
+ 
