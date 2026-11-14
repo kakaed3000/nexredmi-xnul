@@ -1,0 +1,26 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -6764,6 +6764,23 @@
+ {
+ 	__unused const pt_attr_t * const pt_attr = pmap_get_pt_attr(pmap);
+ 
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	{
++		static TUNABLE(bool, diag_pmap, "diag_pmap", false);
++		if (diag_pmap) {
++			kprintf("ANGELICA pmap_expand: enter pmap=%p v=0x%llx options=0x%x level=%u\n",
++			    pmap, (uint64_t)v, options, level);
++			kprintf("ANGELICA pmap_expand: tte=%p min=0x%llx max=0x%llx\n",
++			    pmap->tte, (uint64_t)pmap->min, (uint64_t)pmap->max);
++			kprintf("ANGELICA pmap_expand: pmaps.next=%p pmaps.prev=%p tt_entry_free=%p\n",
++			    pmap->pmaps.next, pmap->pmaps.prev, pmap->tt_entry_free);
++			kprintf("ANGELICA pmap_expand: nested_pmap=%p pt_attr=%p ledger=%p\n",
++			    pmap->nested_pmap, pmap->pmap_pt_attr, pmap->ledger);
++			kprintf("ANGELICA pmap_expand: refcnt=%d\n", pmap->ref_count);
++		}
++	}
++#endif
++
+ 	if (__improbable((v < pmap->min) || (v >= pmap->max))) {
+ 		return KERN_INVALID_ADDRESS;
+ 	}
