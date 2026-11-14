@@ -1,0 +1,50 @@
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+index 0000000..0000000 100644
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -460,5 +460,35 @@ arm64_platform_error(arm_saved_state_t *state, uint32_t esr, vm_offset_t far, pla
+ }
+ 
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++static void
++angelica_panic_bt(arm_saved_state64_t *state)
++{
++	uintptr_t fp = state->fp;
++	uintptr_t sp = state->sp;
++	int i;
++
++	if (fp == 0 || sp == 0) {
++		return;
++	}
++	kprintf("ANGELICA BT:\n");
++	for (i = 0; i < 48; i++) {
++		uintptr_t prev, lr;
++
++		if (fp < sp || (fp & 0xf) != 0) {
++			kprintf("  BT stop fp=0x%016lx sp=0x%016lx\n", fp, sp);
++			break;
++		}
++		prev = ((uintptr_t *)fp)[0];
++		lr = ((uintptr_t *)fp)[1];
++		kprintf("  BT #%d lr=0x%016llx\n", i, (uint64_t)lr);
++		if (prev <= fp || prev == 0) {
++			break;
++		}
++		fp = prev;
++	}
++}
++#endif
++
+ void
+ panic_with_thread_kernel_state(const char *msg, arm_saved_state_t *ss)
+ {
+@@ -470,6 +500,9 @@ panic_with_thread_kernel_state(const char *msg, arm_saved_state_t *ss)
+ 	boolean_t ss_valid;
+ 
+ 	ss_valid = is_saved_state64(ss);
+ 	arm_saved_state64_t *state = saved_state64(ss);
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	angelica_panic_bt(state);
++#endif
+ 
+ 	os_atomic_cmpxchg(&original_faulting_state, NULL, state, seq_cst);
