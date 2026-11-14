@@ -1,9 +1,44 @@
 # xnuL — working notes (angelica)
 
-Last updated **2026-11-02**. This file is the current handoff: status, active
+Last updated **2026-11-14**. This file is the current handoff: status, active
 blocker, next actions, hardware facts and the commands that reproduce the last
 test. The long boot-by-boot bring-up log (2026-10-14 … 2026-11-01) is in git
 history.
+
+## 2026-11-14 — rebrand broke CI's patch application (fixed)
+
+- The sweet→angelica rebrand (b696e98…c13b2fc, 2026-11-14) was done with
+  hand-edited, inconsistent substitutions. CI's `git apply` is atomic per
+  patch, so most of the series was silently skipped in CI (the kernel still
+  built and ran, but without MSDC/USB/Framebuffer/SMP patches, ANGELICA.h and
+  the MASTER config fixes).
+- Fixed in **0a23547**: uniform global rename everywhere; MASTER.arm64.angelica
+  created exactly once (0006) with the final content; 0082 contributes only
+  ANGELICA.h (single ANGELICA define, SMP_MAX_CPUS=8, VTIMER_INTID=27, IPI_SGI=1);
+  obsolete SMP_MAX_CPUS 6/8 hunks in 0065/0078 dropped; 0090 keeps only the real
+  rename edits; 0181 (unbuffered log ring, previously always skipped) now applies.
+- Verified exactly as CI does (`git apply` on a pristine xnu-8796.141.3 tarball,
+  filename order): **172 of 174 patches apply**. The only two that cannot apply are
+  0031/0041 (HFS read-write / catalog link notes for `bsd/angelica_hfs/core/*.c`,
+  sources this tree never adds) — inert, keep them as-is or delete later.
+- **0181/0183/0184 were never in any built image**: CI silently skipped them all.
+  0184 already removed the FB-serial and fixed the log-ring path (committed
+  0f96d63); the new kernel will contain it, so the missing `ANGELICA pmap_expand`
+  / `ANGELICA EXC` prints should reach the USB ring via the console path.
+- **CI run 43585212213** (kakaed3000/nexredmi-xnul, branch angelica, commit
+  0a23547) is building the first kernel with the full series actually applied.
+- The pre-rebrand verified series applied 171/177; only 0031/0041/0181 were
+  skipped then as well. `backup-rebrand-broken` (c13b2fc) preserves the broken
+  rebrand for reference.
+
+## 2026-11-14 (cont.) — user-visible status to watch after this CI build
+
+- Boot args unchanged (see below). Watch port **5140** (`udplog.py` must run
+  before boot). Expected: same chain as the 0182 boot, plus now now-working
+  unbuffered kprintf ring entries (`ANGELICA pmap_expand` path) via 0181+0184.
+- The image to flash will need rebuilding from the new `xnu-kernel` artifact
+  (`tools/mkpayload.py <kernel> <adt> out/xnul-boot-0a23547.img --cmdline "..."`),
+  then `fastboot flash boot` (never `fastboot boot`).
 
 Target: **Redmi 9C only** (`angelica`, MediaTek MT6765 / Helio G35, 8× Cortex-A53,
 4K hardware page tables, 16K iOS software page ABI). No other phone is in scope.
