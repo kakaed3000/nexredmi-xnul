@@ -6,7 +6,7 @@
  
 +#if defined(ARM64_BOARD_CONFIG_ANGELICA)
 +	{
-+		static TUNABLE(bool, diag_pmap, "diag_pmap", false);
++		static TUNABLE(bool, diag_pmap, "diag_pmap", true);
 +		if (diag_pmap) {
 +			kprintf("ANGELICA pmap_expand: enter pmap=%p v=0x%llx options=0x%x level=%u\n",
 +			    pmap, (uint64_t)v, options, level);
