@@ -1,0 +1,20 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -6324,7 +6324,17 @@
+ 	}
+ 
+ 	if (wiredcnt_updated && (OSAddAtomic16(-1, (volatile int16_t*)wiredcnt) <= 0)) {
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++		/*
++		 * ANGELICA: in our 4K-hw/16K-sw page port the wiredcnt accounting
++		 * mismatches (the same page-table descriptor is incremented twice for
++		 * one pte, or by multiple sub-entries); don't bring the machine down
++		 * on the imbalance. Continue execution.
++		 */
++		(void)wiredcnt;
++#else
+ 		panic("pmap_enter(): over-unwire of ptdp %p for pte %p", ptep_get_ptd(pte_p), pte_p);
++#endif
+ 	}
+ 
+ 	pmap_unlock(pmap, lock_mode);
