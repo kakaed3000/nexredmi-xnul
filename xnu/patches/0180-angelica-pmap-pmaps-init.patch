@@ -1,0 +1,20 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -2154,6 +2154,8 @@
+ 	kernel_pmap->pmap_pt_attr = native_pt_attr;
+ #endif /* ARM_PARAMETERIZED_PMAP */
+ 
++	kernel_pmap->pmaps.next = (queue_entry_t)(void *)kernel_pmap;
++	kernel_pmap->pmaps.prev = (queue_entry_t)(void *)kernel_pmap;
+ 	kernel_pmap->nested_region_addr = 0x0ULL;
+ 	kernel_pmap->nested_region_size = 0x0ULL;
+ 	kernel_pmap->nested_region_asid_bitmap = NULL;
+@@ -2913,6 +2915,8 @@
+ 
+ 	p->nx_enabled = true;
+ 	p->is_64bit = is_64bit;
++	p->pmaps.next = (queue_entry_t)(void *)p;
++	p->pmaps.prev = (queue_entry_t)(void *)p;
+ 	p->nested_pmap = PMAP_NULL;
+ 	p->type = PMAP_TYPE_USER;
+ 
