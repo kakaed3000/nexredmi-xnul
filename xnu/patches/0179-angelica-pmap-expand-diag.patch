@@ -14,8 +14,8 @@
 +			    pmap->tte, (uint64_t)pmap->min, (uint64_t)pmap->max);
 +			kprintf("ANGELICA pmap_expand: pmaps.next=%p pmaps.prev=%p tt_entry_free=%p\n",
 +			    pmap->pmaps.next, pmap->pmaps.prev, pmap->tt_entry_free);
-+			kprintf("ANGELICA pmap_expand: nested_pmap=%p pt_attr=%p ledger=%p\n",
-+			    pmap->nested_pmap, pmap->pmap_pt_attr, pmap->ledger);
++			kprintf("ANGELICA pmap_expand: nested_pmap=%p ledger=%p\n",
++			    pmap->nested_pmap, pmap->ledger);
 +			kprintf("ANGELICA pmap_expand: refcnt=%d\n", pmap->ref_count);
 +		}
 +	}
