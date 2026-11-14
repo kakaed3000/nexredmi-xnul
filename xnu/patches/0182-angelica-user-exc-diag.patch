@@ -1,0 +1,35 @@
+--- a/osfmk/kern/exception.c
++++ b/osfmk/kern/exception.c
+@@ -788,6 +788,32 @@
+ 	thread_t thread = current_thread();
+ 	task_t   task   = current_task();
+ 
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	{
++		static TUNABLE(bool, diag_exc, "diag_exc", true);
++		if (diag_exc) {
++			arm_saved_state_t *ss = find_user_regs(thread);
++			int pid = -1;
++			proc_t p = get_bsdtask_info(task);
++			if (p != NULL) {
++				pid = proc_pid(p);
++			}
++			if (ss != NULL && is_saved_state64(ss)) {
++				kprintf("ANGELICA EXC pid %d exc %d codes 0x%llx 0x%llx pc 0x%llx lr 0x%llx sp 0x%llx far 0x%llx esr 0x%x\n",
++				    pid, exception, (uint64_t)(codeCnt > 0 ? code[0] : 0),
++				    (uint64_t)(codeCnt > 1 ? code[1] : 0),
++				    (uint64_t)get_saved_state_pc(ss), (uint64_t)get_saved_state_lr(ss),
++				    (uint64_t)get_saved_state_sp(ss),
++				    (uint64_t)saved_state64(ss)->far, saved_state64(ss)->esr);
++			} else {
++				kprintf("ANGELICA EXC pid %d exc %d codes 0x%llx 0x%llx (not 64-bit user regs)\n",
++				    pid, exception, (uint64_t)(codeCnt > 0 ? code[0] : 0),
++				    (uint64_t)(codeCnt > 1 ? code[1] : 0));
++			}
++		}
++	}
++#endif
++
+ 	assert(codeCnt > 0);
+ 
+ 	if (VM_MAP_PAGE_SIZE(task->map) < PAGE_SIZE) {
