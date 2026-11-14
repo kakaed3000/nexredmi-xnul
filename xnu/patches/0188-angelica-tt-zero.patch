@@ -1,0 +1,27 @@
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+index 0000000..0000000 100644
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -6740,6 +6740,10 @@ pmap_init_pte_page(
+ 	boolean_t alloc_ptd)
+ {
+ 	pt_desc_t   *ptdp = NULL;
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	/* ARM_PTE_TYPE_FAULT == 0: zero the page so no stale entries survive reuse. */
++	bzero((void *)pte_p, PAGE_SIZE);
++#endif
+ 	pv_entry_t **pvh = pai_to_pvh(pa_index(ml_static_vtop((vm_offset_t)pte_p)));
+ 
+ 	if (pvh_test_type(pvh, PVH_TYPE_NULL)) {
+@@ -3516,6 +3520,10 @@ pmap_tt_allocate(
+ 		tt_free_next = tt_free_cur->next;
+ 		tt_free_cur->next = NULL;
+ 		*ttp = (tt_entry_t *)tt_free_cur;
+ 		pmap->tt_entry_free = (tt_entry_t *)tt_free_next;
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++		/* A recycled table can carry stale PTE bits; ARM_PTE_TYPE_FAULT == 0. */
++		bzero((void *)*ttp, PAGE_SIZE);
++#endif
+ 	}
+ 	pmap_unlock(pmap, PMAP_LOCK_EXCLUSIVE);
+ 
