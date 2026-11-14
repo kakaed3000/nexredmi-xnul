@@ -1,0 +1,20 @@
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -761,6 +761,17 @@
+ static void
+ fbcon_transmit_data(uint8_t c)
+ {
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	/*
++	 * kprintf goes through the FB-backed "serial" (PE_kputc = serial_putc_crlf),
++	 * not through the console/video path, so it never reaches the USB debug
++	 * ring via _cnputs() either. Feed it here so the live log sees it.
++	 */
++	{
++		extern void angelica_log_append(const char *, int); /* bsd/dev/angelica_ufs.c */
++		angelica_log_append((const char *)&c, 1);
++	}
++#endif
+ 	if (c == '\r') {
+ 		fbcon_col = 0;
+ 		return;
