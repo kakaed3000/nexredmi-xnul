@@ -1,0 +1,57 @@
+--- a/osfmk/kern/exception.c
++++ b/osfmk/kern/exception.c
+@@ -56,6 +56,11 @@
+ /*
+  */
+ 
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++#include <vm/pmap.h>
++#include <arm/pmap/pmap_pt_geometry.h>
++#endif
++
+ #include <mach/mach_types.h>
+ #include <mach/boolean.h>
+ #include <mach/kern_return.h>
+@@ -812,6 +817,42 @@
+ 			}
+ 		}
+ 	}
++#endif
++
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	{
++		static TUNABLE(bool, diag_exc_pmap, "diag_exc_pmap", true);
++		arm_saved_state_t *uss = find_user_regs(thread);
++		if (diag_exc_pmap && uss != NULL && is_saved_state64(uss)) {
++			if (task != TASK_NULL && task->map != VM_MAP_NULL) {
++				pmap_t pm = vm_map_pmap(task->map);
++				if (pm != PMAP_NULL) {
++					vm_offset_t far = (vm_offset_t)saved_state64(uss)->far;
++					const pt_attr_t *pa = pmap_get_pt_attr(pm);
++					tt_entry_t *tt = pm->tte;
++					unsigned lvl;
++					kprintf("ANGELICA EXC pmap root=%p min=0x%llx max=0x%llx far=0x%llx\n",
++					    pm->tte, (uint64_t)pm->min, (uint64_t)pm->max, (uint64_t)far);
++					for (lvl = pa->pta_root_level; lvl <= pa->pta_max_level; lvl++) {
++						unsigned idx = ttn_index(pa, far, lvl);
++						tt_entry_t *slot = &tt[idx];
++						tt_entry_t v = *slot;
++						kprintf("ANGELICA EXC pmap lvl=%u idx=0x%x slot=%p val=0x%016llx%s\n",
++						    lvl, idx, slot, (uint64_t)v,
++						    ((v & ARM_TTE_VALID) ? "" : " INVALID"));
++						if ((v & (ARM_TTE_TYPE_MASK | ARM_TTE_VALID)) !=
++						    (ARM_TTE_TYPE_TABLE | ARM_TTE_VALID)) {
++							break;
++						}
++						if (lvl == pa->pta_max_level) {
++							break;
++						}
++						tt = (tt_entry_t *)phystokv(v & ARM_TTE_TABLE_MASK);
++					}
++				}
++			}
++		}
++	}
+ #endif
+ 
+ 	assert(codeCnt > 0);
