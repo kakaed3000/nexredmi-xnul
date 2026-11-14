@@ -1,0 +1,30 @@
+--- a/osfmk/vm/vm_shared_region.c
++++ b/osfmk/vm/vm_shared_region.c
+@@ -2351,7 +2351,14 @@
+ 	}
+ 
+ 	/* The pmap-nesting is triggered by the "vmkf_nested_pmap" flag. */
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	/* ANGELICA: avoid pmap nesting. The nested pmap copy is crashing in our
++	 * 16K SW page bootstrap; the grand pmap slots are not guaranteed empty
++	 * on our port yet. */
++	vmk_flags.vmkf_nested_pmap = false;
++#else
+ 	vmk_flags.vmkf_nested_pmap = true;
++#endif
+ 	vmk_flags.vm_tag = VM_MEMORY_SHARED_PMAP;
+ 
+ 	/*
+@@ -3574,7 +3581,12 @@
+ 	    (commpage_size & (pmap_commpage_size_min(map->pmap) - 1)) == 0) {
+ 		/* the commpage is properly aligned or sized for pmap-nesting */
+ 		vmk_flags.vm_tag = VM_MEMORY_SHARED_PMAP;
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++		/* ANGELICA: commpage nested pmap is not used yet (see note above). */
++		vmk_flags.vmkf_nested_pmap = FALSE;
++#else
+ 		vmk_flags.vmkf_nested_pmap = TRUE;
++#endif
+ 	}
+ 
+ 	/* map the comm page in the task's address space */
