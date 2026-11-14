@@ -1,0 +1,25 @@
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -860,8 +860,21 @@
+ {
+ 	kcdata_iter_t iter = kcdata_iter((void *)corpse_info->kcd_addr_begin,
+ 	    corpse_info->kcd_length);
+-	__assert_only uint32_t type = kcdata_iter_type(iter);
++	uint32_t type = kcdata_iter_type(iter);
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	if (type != KCDATA_BUFFER_BEGIN_CRASHINFO) {
++		/*
++		 * ANGELICA: the corpse crashinfo kcdata is occasionally malformed
++		 * between the crashing thread and the corpse notification on this
++		 * port; don't bring the whole system down on the marker. Deliver
++		 * EXC_CRASH instead.
++		 */
++		return EXC_CRASH;
++	}
++#else
++	__assert_only uint32_t assert_type __attribute__((unused)) = type;
+ 	assert(type == KCDATA_BUFFER_BEGIN_CRASHINFO);
++#endif
+ 
+ 	iter = kcdata_iter_find_type(iter, TASK_CRASHINFO_EXCEPTION_TYPE);
+ 	exception_type_t *etype = kcdata_iter_payload(iter);
