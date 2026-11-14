@@ -31,6 +31,24 @@ history.
   skipped then as well. `backup-rebrand-broken` (c13b2fc) preserves the broken
   rebrand for reference.
 
+## 2026-11-14 (cont. II) — panic chain identified; 0185 adds panic backtrace
+
+- Boot reached SpringBoard spawn and userland waves; the phone is alive until
+  it isn't: chain is `logd_helper` SIGABRT (exc 10, e.g. pid 93) → kernel data
+  abort in `_devsw_lock+0xbc` (0xfffffff0079346dc, caller `_devsw_lock+0x70`)
+  walking `_devsw_locks` with a poisoned node (`x23=0xe049c4b09308920a`).
+  Same heap-poisoning family as the 0182 OSUnserializeXML abort.
+- The panic log DOES reach USB (`=== ANGELICA USB PANIC LOG ===`), but with no
+  frame pointers there is no stack; we get pc/fp/lr/registers only.
+- 0181 works: `ANGELICA pmap_expand:` diagnostics arrive over USB; values of
+  `pmaps.next/prev` look sane in the current build (they were garbage in 0182),
+  but the heap is still poisoned somewhere — same chain, different victim.
+- **CI run 43590367256** (43ca446) builds 0185: `angelica_panic_bt()` walks the
+  saved fp chain at panic time (monotonicity + alignment bounded, 48 frames)
+  and kprintf's `ANGELICA BT:` — the next panic will name the caller chain.
+- Phone at panic screen. To test: flash new image, boot, wait for the panic,
+  read `logs/udplog-*.out`. udplog (300s) must run BEFORE boot.
+
 ## 2026-11-14 (cont.) — user-visible status to watch after this CI build
 
 - Boot args unchanged (see below). Watch port **5140** (`udplog.py` must run
