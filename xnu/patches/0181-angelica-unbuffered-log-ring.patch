@@ -1,0 +1,19 @@
+diff --git a/osfmk/console/serial_console.c b/osfmk/console/serial_console.c
+index 4e5751a6d0..f68d50ea31 100644
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -609,6 +609,17 @@ void
+ console_write_unbuffered(char c)
+ {
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	/*
++	 * kprintf (PE_kputc) and the unbuffered panic log path land here
++	 * when there is no UART. _cnputs() appends to the debug ring
++	 * already, but this path bypasses it entirely, which is why angle
++	 * kprintf output (e.g. ANGELICA pmap_expand diagnostics) only showed
++	 * up on the screen. Feed it to the ring too.
++	 */
++	angelica_log_append(&c, 1);
++#endif
+ 	_cnputc(c, true);
+ }
