@@ -1,0 +1,23 @@
+diff --git a/bsd/dev/angelica_usb.c b/bsd/dev/angelica_usb.c
+index 0000000..0000000 100644
+--- a/bsd/dev/angelica_usb.c
++++ b/bsd/dev/angelica_usb.c
+@@ -1594,8 +1594,8 @@ extern char *debug_buf_ptr;
+ extern unsigned int debug_buf_size;
+ extern uint32_t angelica_log_copy(uint64_t *pos, char *out, uint32_t max);
+ extern uint64_t angelica_log_position(void);
+ 
+-static char ud_panic_ring[1024];
++static char ud_panic_ring[4096];
+ 
+ static uint16_t
+ ud_panic_checksum(const uint8_t *p, uint32_t len)
+@@ -1714,7 +1714,7 @@ static void
+ ud_panic_send_ring(void)
+ {
+ 	uint64_t total = angelica_log_position();
+-	uint64_t pos = total > 1024 ? total - 1024 : 0;
++	uint64_t pos = total > 4096 ? total - 4096 : 0;
+ 	uint32_t n;
+ 
+ 	while ((n = angelica_log_copy(&pos, ud_panic_ring,
