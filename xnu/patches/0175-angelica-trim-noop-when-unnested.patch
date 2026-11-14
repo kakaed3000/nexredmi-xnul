@@ -1,0 +1,19 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -8910,6 +8910,16 @@
+ 	}
+ 
+ 	if (__improbable(grand->nested_pmap != subord)) {
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++		if (grand->nested_pmap == PMAP_NULL) {
++			/*
++			 * No nesting was created for this grand pmap (e.g. the
++			 * shared region was entered without the nested pmap);
++			 * nothing to trim.
++			 */
++			return PMAP_TRIM_STATE_DONE;
++		}
++#endif
+ 		panic("%s: grand->nested != subord, "
+ 		    "grand=%p, subord=%p, vstart=%p, size=%#llx, state=%u",
+ 		    __func__, grand, subord, (void*)vstart, size, state);
