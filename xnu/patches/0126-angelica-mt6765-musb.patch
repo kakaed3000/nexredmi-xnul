@@ -5,7 +5,7 @@
 - * ANGELICA: USB bring-up, step 1 - read-only state probe.
 - *
 - * The phone's USB is a Synopsys DWC3 (USB 2.0 only, maximum-speed
-- * high-speed) at 0x0a600000 behind Qualcomm's dwc-usb3-msm wrapper, with a
+- * high-speed) at 0x0a600000 behind MediaTek's dwc-usb3-msm wrapper, with a
 - * QUSB2 PHY at 0x088e2000; its power domain is the USB30_PRIM GDSC and its
 - * clocks come from GCC (offsets from Linux gcc-sdmmagpie.c). ABL uses this
 - * controller for fastboot; this probe only reports what state it is left
@@ -289,10 +289,10 @@
 -#define DEPCMD(n)       (0xc80c + 0x10 * (n))
 -
 -/*
-- * Qualcomm wrapper registers ("QSCRATCH", core base + 0xf8800). The
+- * MediaTek wrapper registers ("QSCRATCH", core base + 0xf8800). The
 - * controller only connects (pull-up on D+) while it sees a valid VBUS
 - * session; Linux dwc3-qcom forces that in software when the charger
-- * reports a cable (dwc3_qcom_vbus_override_enable).
+- * reports a cable (dwc3_angelica_vbus_override_enable).
 - */
 -#define QSCRATCH_PA             0x0a6f8800
 -#define QSCRATCH_HS_PHY_CTRL    0x10

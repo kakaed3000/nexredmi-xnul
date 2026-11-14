@@ -1,14 +1,14 @@
---- a/bsd/dev/sweet_usb.c
-+++ b/bsd/dev/sweet_usb.c
+--- a/bsd/dev/angelica_usb.c
++++ b/bsd/dev/angelica_usb.c
 @@ -146,6 +146,19 @@
  #define DEPCMDPAR0(n)   (0xc808 + 0x10 * (n))
  #define DEPCMD(n)       (0xc80c + 0x10 * (n))
  
 +/*
-+ * Qualcomm wrapper registers ("QSCRATCH", core base + 0xf8800). The
++ * MediaTek wrapper registers ("QSCRATCH", core base + 0xf8800). The
 + * controller only connects (pull-up on D+) while it sees a valid VBUS
 + * session; Linux dwc3-qcom forces that in software when the charger
-+ * reports a cable (dwc3_qcom_vbus_override_enable).
++ * reports a cable (dwc3_angelica_vbus_override_enable).
 + */
 +#define QSCRATCH_PA             0x0a6f8800
 +#define QSCRATCH_HS_PHY_CTRL    0x10
@@ -27,12 +27,12 @@
 +	vm_offset_t qs = ml_io_map(QSCRATCH_PA, 0x100);
 +	if (qs != 0) {
 +		uint32_t hs = usb_rd(qs, QSCRATCH_HS_PHY_CTRL), ss = usb_rd(qs, QSCRATCH_SS_PHY_CTRL);
-+		printf("SWEET USB: QSCRATCH HS_PHY_CTRL 0x%08x SS_PHY_CTRL 0x%08x GENERAL_CFG 0x%08x\n",
++		printf("ANGELICA USB: QSCRATCH HS_PHY_CTRL 0x%08x SS_PHY_CTRL 0x%08x GENERAL_CFG 0x%08x\n",
 +		    hs, ss, usb_rd(qs, 0x08));
 +		*(volatile uint32_t *)(qs + QSCRATCH_HS_PHY_CTRL) = hs | UTMI_OTG_VBUS_VALID | SW_SESSVLD_SEL;
 +		*(volatile uint32_t *)(qs + QSCRATCH_SS_PHY_CTRL) = ss | LANE0_PWR_PRESENT;
 +		__asm__ volatile ("dsb sy" ::: "memory");
-+		printf("SWEET USB: VBUS override on: HS_PHY_CTRL 0x%08x SS_PHY_CTRL 0x%08x\n",
++		printf("ANGELICA USB: VBUS override on: HS_PHY_CTRL 0x%08x SS_PHY_CTRL 0x%08x\n",
 +		    usb_rd(qs, QSCRATCH_HS_PHY_CTRL), usb_rd(qs, QSCRATCH_SS_PHY_CTRL));
 +	}
 +

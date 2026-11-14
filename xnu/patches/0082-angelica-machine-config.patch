@@ -1,11 +1,3 @@
-diff --git a/config/MASTER.arm64.angelica b/config/MASTER.arm64.angelica
-new file mode 120000
-index 0000000..3d4e0de
---- /dev/null
-+++ b/config/MASTER.arm64.angelica
-@@ -0,0 +1 @@
-+MASTER.arm64.sweet
-\ No newline at end of file
 diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
 index 9a748ea..b4c88f8 100644
 --- a/makedefs/MakeInc.def
@@ -14,19 +6,19 @@ index 9a748ea..b4c88f8 100644
  else ifneq ($(findstring _host,$(RC_ProjectName)),)
  SUPPORTED_ARM64_MACHINE_CONFIGS = NONE
  else
--SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T8101 T8103 VMAPPLE SWEET
-+SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T8101 T8103 VMAPPLE SWEET ANGELICA
+-SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T8101 T8103 VMAPPLE ANGELICA
++SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T8101 T8103 VMAPPLE ANGELICA ANGELICA
  
  endif
  
 @@ -62,6 +62,10 @@ MACHINE_FLAGS_ARM64_T6000 = -DARM64_BOARD_CONFIG_T6000 		-mcpu=apple-a14
  MACHINE_FLAGS_ARM64_VMAPPLE = -DARM64_BOARD_CONFIG_VMAPPLE              -march=armv8.5a
  MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837
- MACHINE_FLAGS_ARM64_SWEET = -DARM64_BOARD_CONFIG_SWEET                -march=armv8.2-a+crypto
+ MACHINE_FLAGS_ARM64_ANGELICA = -DARM64_BOARD_CONFIG_ANGELICA                -march=armv8.2-a+crypto
 +# angelica: Cortex-A53 (ARMv8.0, no LSE/PAN => plain armv8-a, not armv8.2).
-+# The SWEET define joins so the whole sweet patch series compiles unchanged;
++# The ANGELICA define joins so the whole angelica patch series compiles unchanged;
 +# ANGELICA.h (via ARM64_BOARD_CONFIG_ANGELICA) overrides what differs.
-+MACHINE_FLAGS_ARM64_ANGELICA = -DARM64_BOARD_CONFIG_ANGELICA -DARM64_BOARD_CONFIG_SWEET -march=armv8-a+crypto
++MACHINE_FLAGS_ARM64_ANGELICA = -DARM64_BOARD_CONFIG_ANGELICA -DARM64_BOARD_CONFIG_ANGELICA -march=armv8-a+crypto
  
  
  #
@@ -34,11 +26,11 @@ index 9a748ea..b4c88f8 100644
  # Without embdedded device map, use a default arch string
  export ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG := $(shell echo $(CURRENT_ARCH_CONFIG) | tr A-Z a-z)
  ifneq ($(filter arm64,$(ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG)),)
--# sweet's Cortex-A76/A55 have no pointer authentication: stay plain arm64
--ifneq ($(CURRENT_MACHINE_CONFIG),SWEET)
-+# sweet's Cortex-A76/A55 and angelica's Cortex-A53 have no pointer
+-# angelica: Cortex-A53 has no pointer authentication: stay plain arm64
+-ifneq ($(CURRENT_MACHINE_CONFIG),ANGELICA)
++# angelica: Cortex-A53 has no pointer
 +# authentication: stay plain arm64
-+ifeq ($(filter SWEET ANGELICA,$(CURRENT_MACHINE_CONFIG)),)
++ifeq ($(filter ANGELICA ANGELICA,$(CURRENT_MACHINE_CONFIG)),)
  export ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG := arm64e
  endif
  endif
@@ -53,14 +45,14 @@ index 0000000..4fe07d0
 + * 8x Cortex-A53 (ARMv8.0: no PAN, no LSE), 16K pages, GICv3, no PAC.
 + *
 + * The ANGELICA machine config passes BOTH -DARM64_BOARD_CONFIG_ANGELICA and
-+ * -DARM64_BOARD_CONFIG_SWEET, and this header defines SWEET as well, so the
-+ * entire sweet patch series (drivers, identity, crypto, master-config files)
++ * -DARM64_BOARD_CONFIG_ANGELICA, and this header defines ANGELICA as well, so the
++ * entire angelica patch series (drivers, identity, crypto, master-config files)
 + * compiles for angelica unchanged; angelica-only deltas are gated on
 + * defined(ANGELICA) or on this file's own values.
 + *
 + * Timer PPI numbering follows the ARM architecture (13/14/11/10: secure
 + * phys, phys, virt, hyp), so the virtual timer XNU uses (CNTV) is
-+ * INTID 16 + 11 = 27 - Qualcomm renumbers those on sweet (-> 19), MTK does
++ * INTID 16 + 11 = 27 - MediaTek renumbers those on angelica (-> 19), MTK does
 + * not. GIC/timer addresses are not hardcoded anywhere: pe_fiq reads the
 + * gic node's reg + virtual-timer-intid from the ADT built by mkadt.
 + */
@@ -71,9 +63,9 @@ index 0000000..4fe07d0
 +#define NO_MONITOR                1
 +#define NO_ECORE                  1
 +
-+#define SWEET                     1
++#define ANGELICA                     1
 +#define ANGELICA                  1
-+#define SWEET_SMP_MAX_CPUS        8
++#define ANGELICA_SMP_MAX_CPUS        8
 +
 +#define ARM_ARCH_TIMER
 +#define __ARM_ARCH__              8
@@ -93,8 +85,8 @@ index 0000000..4fe07d0
 +#define PLATFORM_PANIC_LOG_DISABLED
 +#endif /* ! ASSEMBLER */
 +
-+#define SWEET_VTIMER_INTID        27
-+#define SWEET_IPI_SGI             1       // SGI used for cross-CPU signals
++#define ANGELICA_VTIMER_INTID        27
++#define ANGELICA_IPI_SGI             1       // SGI used for cross-CPU signals
 +
 +#define GIC_SPURIOUS_IRQ          1023    // IRQ no. for GIC spurious interrupt
 +
@@ -135,8 +127,8 @@ index c7d274f..358e1d7 100644
  	H13.h \
  	VMAPPLE.h \
  	BCM2837.h \
--	SWEET.h
-+	SWEET.h \
+-	ANGELICA.h
++	ANGELICA.h \
 +	ANGELICA.h
  
  
@@ -149,7 +141,7 @@ index 88e524a..68c1dde 100644
  #define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
  #endif  /* ARM64_BOARD_CONFIG_BCM2837 */
  
--#ifdef ARM64_BOARD_CONFIG_SWEET
+-#ifdef ARM64_BOARD_CONFIG_ANGELICA
 +#ifdef ARM64_BOARD_CONFIG_ANGELICA
 +#include <pexpert/arm64/ANGELICA.h>
 +
@@ -159,16 +151,16 @@ index 88e524a..68c1dde 100644
 +
 +#define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
 +
-+#elif defined ARM64_BOARD_CONFIG_SWEET
- #include <pexpert/arm64/SWEET.h>
++#elif defined ARM64_BOARD_CONFIG_ANGELICA
+ #include <pexpert/arm64/ANGELICA.h>
  
  #define MAX_L2_CLINE                   6
 @@ -106,7 +115,7 @@
  
  #define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
  
--#endif  /* ARM64_BOARD_CONFIG_SWEET */
-+#endif  /* ARM64_BOARD_CONFIG_SWEET (or ANGELICA above) */
+-#endif  /* ARM64_BOARD_CONFIG_ANGELICA */
++#endif  /* ARM64_BOARD_CONFIG_ANGELICA (or ANGELICA above) */
  
  #ifdef ARM64_BOARD_CONFIG_VMAPPLE
  #include <pexpert/arm64/VMAPPLE.h>

@@ -1,29 +1,29 @@
 --- a/libkern/conf/files
 +++ b/libkern/conf/files
 @@ -106,6 +106,9 @@
- libkern/crypto/sweet_md5.c	optional crypto
- libkern/crypto/sweet_dec32le.c	optional crypto
- libkern/crypto/sweet_enc32le.c	optional crypto
-+libkern/crypto/sweet_sha1.c	optional crypto
-+libkern/crypto/sweet_dec32be.c	optional crypto
-+libkern/crypto/sweet_enc32be.c	optional crypto
+ libkern/crypto/angelica_md5.c	optional crypto
+ libkern/crypto/angelica_dec32le.c	optional crypto
+ libkern/crypto/angelica_enc32le.c	optional crypto
++libkern/crypto/angelica_sha1.c	optional crypto
++libkern/crypto/angelica_dec32be.c	optional crypto
++libkern/crypto/angelica_enc32be.c	optional crypto
  libkern/crypto/corecrypto_aesxts.c		optional crypto
  libkern/crypto/corecrypto_rand.c		optional crypto
  libkern/crypto/corecrypto_rsa.c		    optional crypto
 --- a/libkern/conf/Makefile.template
 +++ b/libkern/conf/Makefile.template
 @@ -44,6 +44,15 @@
- sweet_dec32le.o_CFLAGS_ADD += -mgeneral-regs-only
- sweet_enc32le.o_CFLAGS_ADD += -mgeneral-regs-only
+ angelica_dec32le.o_CFLAGS_ADD += -mgeneral-regs-only
+ angelica_enc32le.o_CFLAGS_ADD += -mgeneral-regs-only
  corecrypto_md5.o_CFLAGS_ADD += -mgeneral-regs-only
 +# BearSSL SHA-1 behind the legacy SHA1Init/Update/Final API (corecrypto_sha1.c).
-+sweet_sha1.o_INCFLAGS = $(SWEET_AES_INC)
-+sweet_dec32be.o_INCFLAGS = $(SWEET_AES_INC)
-+sweet_enc32be.o_INCFLAGS = $(SWEET_AES_INC)
-+corecrypto_sha1.o_INCFLAGS = $(SWEET_AES_INC)
-+sweet_sha1.o_CFLAGS_ADD += -mgeneral-regs-only
-+sweet_dec32be.o_CFLAGS_ADD += -mgeneral-regs-only
-+sweet_enc32be.o_CFLAGS_ADD += -mgeneral-regs-only
++angelica_sha1.o_INCFLAGS = $(ANGELICA_AES_INC)
++angelica_dec32be.o_INCFLAGS = $(ANGELICA_AES_INC)
++angelica_enc32be.o_INCFLAGS = $(ANGELICA_AES_INC)
++corecrypto_sha1.o_INCFLAGS = $(ANGELICA_AES_INC)
++angelica_sha1.o_CFLAGS_ADD += -mgeneral-regs-only
++angelica_dec32be.o_CFLAGS_ADD += -mgeneral-regs-only
++angelica_enc32be.o_CFLAGS_ADD += -mgeneral-regs-only
 +corecrypto_sha1.o_CFLAGS_ADD += -mgeneral-regs-only
  endif
  
@@ -34,10 +34,10 @@
  	ctx->c.b64[0] = count;
  }
  
-+#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
 +/*
-+ * SWEET has no corecrypto kext (g_crypto_funcs stays NULL). SHA-1 uses
-+ * BearSSL's portable implementation (libkern/crypto/sweet_sha1.c), with
++ * ANGELICA has no corecrypto kext (g_crypto_funcs stays NULL). SHA-1 uses
++ * BearSSL's portable implementation (libkern/crypto/angelica_sha1.c), with
 + * SHA1_CTX carrying exactly its state: chaining value, byte count and the
 + * partial block, converted around each call like the corecrypto path does.
 + */
@@ -88,7 +88,7 @@
 +	br_sha1_out(&br_ctx, digest);
 +}
 +
-+#else /* !ARM64_BOARD_CONFIG_SWEET */
++#else /* !ARM64_BOARD_CONFIG_ANGELICA */
 +
  /* Copy a ccdigest ctx into a legacy SHA1 context */
  static void
@@ -97,29 +97,29 @@
  	ccdigest_final(di, di_ctx, digest);
  }
  
-+#endif /* !ARM64_BOARD_CONFIG_SWEET */
++#endif /* !ARM64_BOARD_CONFIG_ANGELICA */
 +
  /* This is not publicised in header, but exported in libkern.exports */
  void SHA1Final_r(SHA1_CTX *context, void *digest);
  void
 --- /dev/null
-+++ b/libkern/crypto/sweet_sha1.c
++++ b/libkern/crypto/angelica_sha1.c
 @@ -0,0 +1,4 @@
 +/* BearSSL sources are fetched at an immutable commit by 0020-stage-bearssl.sh. */
-+#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
 +#include "angelica_bearssl/src/hash/sha1.c"
 +#endif
 --- /dev/null
-+++ b/libkern/crypto/sweet_dec32be.c
++++ b/libkern/crypto/angelica_dec32be.c
 @@ -0,0 +1,4 @@
 +/* BearSSL sources are fetched at an immutable commit by 0020-stage-bearssl.sh. */
-+#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
 +#include "angelica_bearssl/src/codec/dec32be.c"
 +#endif
 --- /dev/null
-+++ b/libkern/crypto/sweet_enc32be.c
++++ b/libkern/crypto/angelica_enc32be.c
 @@ -0,0 +1,4 @@
 +/* BearSSL sources are fetched at an immutable commit by 0020-stage-bearssl.sh. */
-+#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
 +#include "angelica_bearssl/src/codec/enc32be.c"
 +#endif

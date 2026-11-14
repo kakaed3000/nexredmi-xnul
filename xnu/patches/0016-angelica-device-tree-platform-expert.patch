@@ -5,11 +5,11 @@ diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
  
  const char * gIOKernelConfigTables =
      "("
-+#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
 +    "   {"
-+    "     'IOClass'         = SweetPlatformExpert;"
++    "     'IOClass'         = AngelicaPlatformExpert;"
 +    "     'IOProviderClass' = IOPlatformExpertDevice;"
-+    "     'IONameMatch'     = 'xiaomi,sweet';"
++    "     'IONameMatch'     = 'xiaomi,angelica';"
 +    "     'IOProbeScore'    = 10000:32;"
 +    "   },"
 +#endif
@@ -24,27 +24,27 @@ diff --git a/iokit/conf/files.arm64 b/iokit/conf/files.arm64
  # SMP
  iokit/Kernel/arm/AppleARMSMP.cpp    					optional iokitcpp
 +
-+# SWEET device-tree platform (empty translation unit on other boards)
-+iokit/Kernel/arm/SweetPlatformExpert.cpp                         optional iokitcpp
-diff --git a/iokit/Kernel/arm/SweetPlatformExpert.cpp b/iokit/Kernel/arm/SweetPlatformExpert.cpp
++# ANGELICA device-tree platform (empty translation unit on other boards)
++iokit/Kernel/arm/AngelicaPlatformExpert.cpp                         optional iokitcpp
+diff --git a/iokit/Kernel/arm/AngelicaPlatformExpert.cpp b/iokit/Kernel/arm/AngelicaPlatformExpert.cpp
 new file mode 100644
 --- /dev/null
-+++ b/iokit/Kernel/arm/SweetPlatformExpert.cpp
++++ b/iokit/Kernel/arm/AngelicaPlatformExpert.cpp
 @@ -0,0 +1,86 @@
 +/*
-+ * Minimal device-tree platform expert for Redmi Note 10 Pro (sweet).
++ * Minimal device-tree platform expert for Redmi 9C (angelica).
 + * Uses XNU's normal platform, power-domain and nub initialization. Hardware
 + * interrupt and power-management services are supplied by separate drivers.
 + */
 +#include <pexpert/arm64/board_config.h>
 +
-+#if defined(SWEET)
++#if defined(ANGELICA)
 +#include <IOKit/IOPlatformExpert.h>
 +#include <IOKit/IODeviceTreeSupport.h>
 +#include <IOKit/IOLib.h>
 +
-+class SweetPlatformExpert : public IODTPlatformExpert {
-+	OSDeclareDefaultStructors(SweetPlatformExpert);
++class AngelicaPlatformExpert : public IODTPlatformExpert {
++	OSDeclareDefaultStructors(AngelicaPlatformExpert);
 +
 +public:
 +	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
@@ -55,38 +55,38 @@ new file mode 100644
 +	bool getProductName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
 +};
 +
-+OSDefineMetaClassAndStructors(SweetPlatformExpert, IODTPlatformExpert);
++OSDefineMetaClassAndStructors(AngelicaPlatformExpert, IODTPlatformExpert);
 +
 +bool
-+SweetPlatformExpert::start(IOService *provider)
++AngelicaPlatformExpert::start(IOService *provider)
 +{
-+	IOLog("SWEET: starting device-tree platform expert\n");
++	IOLog("ANGELICA: starting device-tree platform expert\n");
 +	if (!IODTPlatformExpert::start(provider)) {
 +		return false;
 +	}
 +	registerService();
-+	IOLog("SWEET: platform expert registered\n");
++	IOLog("ANGELICA: platform expert registered\n");
 +	return true;
 +}
 +
 +const char *
-+SweetPlatformExpert::deleteList(void)
++AngelicaPlatformExpert::deleteList(void)
 +{
 +	return "()";
 +}
 +
 +const char *
-+SweetPlatformExpert::excludeList(void)
++AngelicaPlatformExpert::excludeList(void)
 +{
 +	return "('chosen', 'defaults', 'cpus', 'options')";
 +}
 +
 +void
-+SweetPlatformExpert::processTopLevel(IORegistryEntry *root)
++AngelicaPlatformExpert::processTopLevel(IORegistryEntry *root)
 +{
 +	/*
 +	 * The stock implementation requires an Apple NVRAM /options node.
-+	 * SWEET has no NVRAM controller; publish real CPU/device nodes without
++	 * ANGELICA has no NVRAM controller; publish real CPU/device nodes without
 +	 * inventing one. createNubs adds the topology's logical CPU/cluster IDs.
 +	 */
 +	IORegistryEntry *cpus = root->childFromPath("cpus", gIODTPlane);
@@ -98,22 +98,22 @@ new file mode 100644
 +}
 +
 +bool
-+SweetPlatformExpert::getTargetName(char *name, int maxLength)
++AngelicaPlatformExpert::getTargetName(char *name, int maxLength)
 +{
 +	if (name == NULL || maxLength <= 0) {
 +		return false;
 +	}
-+	strlcpy(name, "sweet", (size_t)maxLength);
++	strlcpy(name, "angelica", (size_t)maxLength);
 +	return true;
 +}
 +
 +bool
-+SweetPlatformExpert::getProductName(char *name, int maxLength)
++AngelicaPlatformExpert::getProductName(char *name, int maxLength)
 +{
 +	if (name == NULL || maxLength <= 0) {
 +		return false;
 +	}
-+	strlcpy(name, "Redmi Note 10 Pro", (size_t)maxLength);
++	strlcpy(name, "Redmi 9C", (size_t)maxLength);
 +	return true;
 +}
-+#endif /* SWEET */
++#endif /* ANGELICA */

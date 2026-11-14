@@ -1,6 +1,6 @@
-sweet: drop KPI exports that only Apple's closed per-SoC library defines
+angelica: drop KPI exports that only Apple's closed per-SoC library defines
 (DART/SART/UAT IOMMUs, NVMe PPL, pmap_iommu_*, IOUnifiedAddressTranslator).
-None of that hardware exists on SM7150; kextsymboltool rejects exports
+None of that hardware exists on MT6765; kextsymboltool rejects exports
 the kernel does not define. Verified with tools/check-exports.py.
 
 diff --git a/config/Private.arm64.exports b/config/Private.arm64.exports

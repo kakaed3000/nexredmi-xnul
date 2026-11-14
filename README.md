@@ -157,7 +157,7 @@ calibration data, or Apple's copyrighted files.
 | 0087 | Classic non-large-memory layout for 4K (TTBR1 roots at L1, `T1SZ=25`) |
 | 0088 | Build ANGELICA with `-mcpu=cortex-a53+crypto` (no ARMv8.1 LSE atomics) |
 | 0089 | PFZ commpage trylock: `ldaxr`/`stxr` loop instead of LSE `casa` on non-LSE CPUs |
-| 0090 | Full ANGELICA rebrand of the final tree (SWEET paths/identifiers removed) |
+| 0090 | Final single-name rebrand of the tree (legacy dual-name layer removed) |
 | 0091 | Fix the 8-byte ANGELICA log magic and add `kmem_range_init` failure diagnostics |
 | 0092 | Put the `kmem_range_init` claim layout into the panic string and retry a failed claim from the map start |
 | 0093 | Use the 24 GB zone map and the iOS compressor cap on ANGELICA instead of the macOS 128 GB/16x sizes |
@@ -204,6 +204,6 @@ Built on Apple's open-source releases (xnu, IOHIDFamily, libpthread, hfs), the
 upstream ios-angelica work this tree started from),
 [BearSSL](https://bearssl.org),
 [blacktop/darwin-xnu-build](https://github.com/blacktop/darwin-xnu-build),
-[ipsw](https://github.com/blacktop/ipsw), Qualcomm/Xiaomi's published Linux
+[ipsw](https://github.com/blacktop/ipsw), MediaTek/Xiaomi's published Linux
 kernel sources, and [OrangeFox Recovery](https://orangefox.download). iOS itself
 is Apple's and is not distributed here.

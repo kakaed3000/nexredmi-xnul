@@ -5,19 +5,19 @@ index 6630131..bf41430 100644
 @@ -105,6 +105,7 @@ bsd/dev/random/randomdev.c		standard
  
  bsd/dev/memdev.c			standard
- bsd/dev/sweet_ufs.c			standard
-+bsd/dev/sweet_msdc.c			standard
- bsd/dev/sweet_sample.c			standard
- bsd/dev/sweet_keys.c			standard
- bsd/dev/sweet_touch.c			standard
-diff --git a/bsd/dev/sweet_msdc.c b/bsd/dev/sweet_msdc.c
+ bsd/dev/angelica_ufs.c			standard
++bsd/dev/angelica_msdc.c			standard
+ bsd/dev/angelica_sample.c			standard
+ bsd/dev/angelica_keys.c			standard
+ bsd/dev/angelica_touch.c			standard
+diff --git a/bsd/dev/angelica_msdc.c b/bsd/dev/angelica_msdc.c
 new file mode 100644
 index 0000000..d330de0
 --- /dev/null
-+++ b/bsd/dev/sweet_msdc.c
++++ b/bsd/dev/angelica_msdc.c
 @@ -0,0 +1,485 @@
 +/*
-+ * SWEET ANGELICA internal eMMC root device (read-only).
++ * ANGELICA ANGELICA internal eMMC root device (read-only).
 + *
 + * LK already initialised the MediaTek MSDC0 host and the eMMC (our boot image
 + * came from this chip), so this driver reuses that state: polled single-block
@@ -89,8 +89,8 @@ index 0000000..d330de0
 +	bool ready;
 +} sm;
 +
-+static LCK_GRP_DECLARE(sweet_msdc_grp, "sweet_msdc");
-+static LCK_MTX_DECLARE(sweet_msdc_lock, &sweet_msdc_grp);
++static LCK_GRP_DECLARE(angelica_msdc_grp, "angelica_msdc");
++static LCK_MTX_DECLARE(angelica_msdc_lock, &angelica_msdc_grp);
 +
 +static inline uint32_t
 +msdc_rd(uint32_t off)
@@ -171,7 +171,7 @@ index 0000000..d330de0
 +		return error;
 +	}
 +	if (resp & (R1_OUT_OF_RANGE | R1_ERROR)) {
-+		printf("SWEET MSDC: CMD17 %llu status 0x%x\n", lba, resp);
++		printf("ANGELICA MSDC: CMD17 %llu status 0x%x\n", lba, resp);
 +		return EIO;
 +	}
 +
@@ -217,14 +217,14 @@ index 0000000..d330de0
 +		return error;
 +	}
 +	if (memcmp(sm.sector, "EFI PART", 8) != 0) {
-+		printf("SWEET MSDC: no GPT\n");
++		printf("ANGELICA MSDC: no GPT\n");
 +		return ENXIO;
 +	}
 +	memcpy(&entry_lba, sm.sector + 72, 8);
 +	memcpy(&nent, sm.sector + 80, 4);
 +	memcpy(&esz, sm.sector + 84, 4);
 +	if (esz != 128 || nent == 0 || nent > 512) {
-+		printf("SWEET MSDC: unsupported GPT entries %u x %u\n", nent, esz);
++		printf("ANGELICA MSDC: unsupported GPT entries %u x %u\n", nent, esz);
 +		return ENXIO;
 +	}
 +
@@ -262,12 +262,12 @@ index 0000000..d330de0
 +		sm.nblocks = last - first + 1;
 +		return 0;
 +	}
-+	printf("SWEET MSDC: no GPT partition named \"%s\"\n", want);
++	printf("ANGELICA MSDC: no GPT partition named \"%s\"\n", want);
 +	return ENOENT;
 +}
 +
 +static int
-+sweet_msdc_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
++angelica_msdc_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
 +{
 +	if (!sm.ready) {
 +		return ENXIO;
@@ -276,13 +276,13 @@ index 0000000..d330de0
 +}
 +
 +static int
-+sweet_msdc_close(__unused dev_t dev, __unused int flags, __unused int devtype, __unused struct proc *p)
++angelica_msdc_close(__unused dev_t dev, __unused int flags, __unused int devtype, __unused struct proc *p)
 +{
 +	return 0;
 +}
 +
 +static void
-+sweet_msdc_strategy(buf_t bp)
++angelica_msdc_strategy(buf_t bp)
 +{
 +	int error = 0;
 +	caddr_t vaddr = NULL;
@@ -307,7 +307,7 @@ index 0000000..d330de0
 +		goto done;
 +	}
 +
-+	lck_mtx_lock(&sweet_msdc_lock);
++	lck_mtx_lock(&angelica_msdc_lock);
 +	for (uint32_t done = 0; done < count;) {
 +		uint64_t pos = off + done;
 +		uint32_t in = (uint32_t)(pos % MSDC_BLOCK);
@@ -321,7 +321,7 @@ index 0000000..d330de0
 +		done += want;
 +		buf_setresid(bp, count - done);
 +	}
-+	lck_mtx_unlock(&sweet_msdc_lock);
++	lck_mtx_unlock(&angelica_msdc_lock);
 +	buf_unmap(bp);
 +
 +done:
@@ -332,7 +332,7 @@ index 0000000..d330de0
 +}
 +
 +static int
-+sweet_msdc_ioctl(__unused dev_t dev, u_long cmd, caddr_t data, __unused int flag,
++angelica_msdc_ioctl(__unused dev_t dev, u_long cmd, caddr_t data, __unused int flag,
 +    __unused struct proc *p, int is_char)
 +{
 +	uint32_t *f = (uint32_t *)data;
@@ -383,51 +383,51 @@ index 0000000..d330de0
 +}
 +
 +static int
-+sweet_msdc_bioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
++angelica_msdc_bioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 +{
-+	return sweet_msdc_ioctl(dev, cmd, data, flag, p, 0);
++	return angelica_msdc_ioctl(dev, cmd, data, flag, p, 0);
 +}
 +
 +static int
-+sweet_msdc_cioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
++angelica_msdc_cioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 +{
-+	return sweet_msdc_ioctl(dev, cmd, data, flag, p, 1);
++	return angelica_msdc_ioctl(dev, cmd, data, flag, p, 1);
 +}
 +
 +static int
-+sweet_msdc_psize(__unused dev_t dev)
++angelica_msdc_psize(__unused dev_t dev)
 +{
 +	return sm.ready ? (int)MIN(sm.nblocks * MSDC_BLOCK / sm.secsize, INT_MAX) : -1;
 +}
 +
 +static int
-+sweet_msdc_read(dev_t dev, struct uio *uio, __unused int ioflag)
++angelica_msdc_read(dev_t dev, struct uio *uio, __unused int ioflag)
 +{
-+	return physio(sweet_msdc_strategy, NULL, dev, B_READ, minphys, uio, (int)sm.secsize);
++	return physio(angelica_msdc_strategy, NULL, dev, B_READ, minphys, uio, (int)sm.secsize);
 +}
 +
 +static int
-+sweet_msdc_write(__unused dev_t dev, __unused struct uio *uio, __unused int ioflag)
++angelica_msdc_write(__unused dev_t dev, __unused struct uio *uio, __unused int ioflag)
 +{
 +	return EROFS;
 +}
 +
-+static const struct bdevsw sweet_msdc_bdevsw = {
-+	.d_open     = sweet_msdc_open,
-+	.d_close    = sweet_msdc_close,
-+	.d_strategy = sweet_msdc_strategy,
-+	.d_ioctl    = sweet_msdc_bioctl,
++static const struct bdevsw angelica_msdc_bdevsw = {
++	.d_open     = angelica_msdc_open,
++	.d_close    = angelica_msdc_close,
++	.d_strategy = angelica_msdc_strategy,
++	.d_ioctl    = angelica_msdc_bioctl,
 +	.d_dump     = eno_dump,
-+	.d_psize    = sweet_msdc_psize,
++	.d_psize    = angelica_msdc_psize,
 +	.d_type     = D_DISK,
 +};
 +
-+static const struct cdevsw sweet_msdc_cdevsw = {
-+	.d_open       = sweet_msdc_open,
-+	.d_close      = sweet_msdc_close,
-+	.d_read       = sweet_msdc_read,
-+	.d_write      = sweet_msdc_write,
-+	.d_ioctl      = sweet_msdc_cioctl,
++static const struct cdevsw angelica_msdc_cdevsw = {
++	.d_open       = angelica_msdc_open,
++	.d_close      = angelica_msdc_close,
++	.d_read       = angelica_msdc_read,
++	.d_write      = angelica_msdc_write,
++	.d_ioctl      = angelica_msdc_cioctl,
 +	.d_stop       = eno_stop,
 +	.d_reset      = eno_reset,
 +	.d_ttys       = NULL,
@@ -440,7 +440,7 @@ index 0000000..d330de0
 +};
 +
 +static int
-+sweet_msdc_init(void)
++angelica_msdc_init(void)
 +{
 +	DTEntry node;
 +	uintptr_t const *reg = NULL;
@@ -448,10 +448,10 @@ index 0000000..d330de0
 +	char want[64] = "userdata";
 +	int error;
 +
-+	if (SecureDTLookupEntry(NULL, "/sweet-msdc", &node) != kSuccess ||
++	if (SecureDTLookupEntry(NULL, "/angelica-msdc", &node) != kSuccess ||
 +	    SecureDTGetProperty(node, "reg", (void const **)&reg, &size) != kSuccess ||
 +	    size < 2 * sizeof(uintptr_t)) {
-+		printf("SWEET MSDC: no /sweet-msdc node in the device tree\n");
++		printf("ANGELICA MSDC: no /angelica-msdc node in the device tree\n");
 +		return ENXIO;
 +	}
 +	PE_parse_boot_argn("msdcroot", want, sizeof(want));
@@ -459,20 +459,20 @@ index 0000000..d330de0
 +	sm.regs = ml_io_map(reg[0], reg[1]);
 +	sm.secsize = DEV_BSIZE;
 +
-+	lck_mtx_lock(&sweet_msdc_lock);
++	lck_mtx_lock(&angelica_msdc_lock);
 +	msdc_wr(MSDC_INTEN, 0);                 /* polled operation */
 +	msdc_wr(MSDC_INT, MSDC_INT_CMDMASK | MSDC_INT_DATAMASK);
 +	error = msdc_find_partition(want);
-+	lck_mtx_unlock(&sweet_msdc_lock);
++	lck_mtx_unlock(&angelica_msdc_lock);
 +	if (error) {
 +		return error;
 +	}
 +
-+	sm.bmajor = bdevsw_add(-1, &sweet_msdc_bdevsw);
++	sm.bmajor = bdevsw_add(-1, &angelica_msdc_bdevsw);
 +	if (sm.bmajor < 0) {
 +		return ENXIO;
 +	}
-+	sm.cmajor = cdevsw_add_with_bdev(-1, &sweet_msdc_cdevsw, sm.bmajor);
++	sm.cmajor = cdevsw_add_with_bdev(-1, &angelica_msdc_cdevsw, sm.bmajor);
 +	if (sm.cmajor < 0) {
 +		return ENXIO;
 +	}
@@ -480,19 +480,19 @@ index 0000000..d330de0
 +	devfs_make_node(sm.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "msdcroot0");
 +	devfs_make_node(makedev(sm.cmajor, 0), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, 0640, "rmsdcroot0");
 +	sm.ready = true;
-+	printf("SWEET MSDC: \"%s\": first block 0x%llx, %llu MiB, read-only\n",
++	printf("ANGELICA MSDC: \"%s\": first block 0x%llx, %llu MiB, read-only\n",
 +	    want, sm.first_block, sm.nblocks * MSDC_BLOCK >> 20);
 +	return 0;
 +}
 +
 +/* Root device for rd=msdcroot0 (IOFindBSDRoot). */
-+int sweet_msdc_rootdev(dev_t *dev);
++int angelica_msdc_rootdev(dev_t *dev);
 +
 +int
-+sweet_msdc_rootdev(dev_t *dev)
++angelica_msdc_rootdev(dev_t *dev)
 +{
 +	if (!sm.ready) {
-+		int error = sweet_msdc_init();
++		int error = angelica_msdc_init();
 +		if (error) {
 +			return error;
 +		}
@@ -511,14 +511,14 @@ index e6c74aa..dffd17c 100644
  
 +#if defined(ARM64_BOARD_CONFIG_ANGELICA)
 +//
-+//	ANGELICA: root on a GPT partition of the internal eMMC (bsd/dev/sweet_msdc.c)
++//	ANGELICA: root on a GPT partition of the internal eMMC (bsd/dev/angelica_msdc.c)
 +//
 +	if (strcmp(rdBootVar, "msdcroot0") == 0) {
-+		extern int sweet_msdc_rootdev(dev_t *dev);
++		extern int angelica_msdc_rootdev(dev_t *dev);
 +		OSSafeReleaseNULL(matching);
-+		int msdc_error = sweet_msdc_rootdev(root);
++		int msdc_error = angelica_msdc_rootdev(root);
 +		if (msdc_error) {
-+			panic("IOFindBSDRoot: SWEET MSDC root %s unavailable: %d", rdBootVar, msdc_error);
++			panic("IOFindBSDRoot: ANGELICA MSDC root %s unavailable: %d", rdBootVar, msdc_error);
 +		}
 +		strlcpy(rootName, rdBootVar, rootNameSize);
 +		IOLog("BSD root: %s, major %d, minor %d\n", rootName, major(*root), minor(*root));
