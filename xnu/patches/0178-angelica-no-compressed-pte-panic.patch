@@ -1,0 +1,25 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -512,12 +512,22 @@
+ 
+ /* PTE Define Macros */
+ 
++/* ANGELICA: don't panic on unexpected bits in invalid PTEs; our 4K/16K port
++ * sometimes leaves leftover bits in otherwise-invalid mappings. Treat those
++ * entries as not compressed instead of bringing the machine down. */
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++#define ARM_PTE_IS_COMPRESSED(x, p) \
++	((((x) & 0x3) == 0) && /* PTE is not valid... */                      \
++	 ((x) & ARM_PTE_COMPRESSED) && /* ...has "compressed" marker" */      \
++	 (!((x) & ~ARM_PTE_COMPRESSED_MASK)))
++#else
+ #define ARM_PTE_IS_COMPRESSED(x, p) \
+ 	((((x) & 0x3) == 0) && /* PTE is not valid... */                      \
+ 	 ((x) & ARM_PTE_COMPRESSED) && /* ...has "compressed" marker" */      \
+ 	 ((!((x) & ~ARM_PTE_COMPRESSED_MASK)) || /* ...no other bits */       \
+ 	 (panic("compressed PTE %p 0x%llx has extra bits 0x%llx: corrupted?", \
+ 	        (p), (x), (x) & ~ARM_PTE_COMPRESSED_MASK), FALSE)))
++#endif
+ 
+ #define pte_is_wired(pte)                                                               \
+ 	(((pte) & ARM_PTE_WIRED_MASK) == ARM_PTE_WIRED)
