@@ -1,0 +1,11 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -8491,7 +8491,8 @@ pmap_map_globals(
+ 	pte |= ARM_PTE_ATTRINDX(CACHE_ATTRINDX_WRITEBACK);
+ 	pte |= ARM_PTE_SH(SH_OUTER_MEMORY);
+-	write_pte_strong(ptep, pte);
++	*ptep = pte;
++	FLUSH_PTE();
+ 	PMAP_UPDATE_TLBS(kernel_pmap, LOWGLOBAL_ALIAS, LOWGLOBAL_ALIAS + PAGE_SIZE, false, true);
+ 
+ #if KASAN
