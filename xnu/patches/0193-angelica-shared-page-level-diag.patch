@@ -1,0 +1,33 @@
+--- a/osfmk/vm/vm_shared_region.c
++++ b/osfmk/vm/vm_shared_region.c
+@@ -3036,6 +3036,9 @@
+ 
+ 	uint32_t page_offset = start_offset;
+ 	uint32_t delta = 1;
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	bool sdbg_printed = false;
++#endif
+ 
+ 	while (delta != 0 && page_offset <= last_page_offset) {
+ 		uint8_t *loc;
+@@ -3054,6 +3057,20 @@
+ 		page_offset += delta;
+ 	}
+ 
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	if (page_offset > last_page_offset && !sdbg_printed) {
++		uint64_t dump[8] = { 0 };
++		memcpy(dump, page_content, sizeof(dump));
++		kprintf("ANGELICA SR: chain64 overflow page=%p start=%u offset=%u last=%u delta=%u dmask=%llx vmask=%llx vadd=%llx\n",
++		    page_content, start_offset, page_offset, last_page_offset, delta,
++		    (unsigned long long)delta_mask, (unsigned long long)value_mask, (unsigned long long)value_add);
++		kprintf("ANGELICA SR: p0=%016llx p1=%016llx p2=%016llx p3=%016llx p4=%016llx p5=%016llx p6=%016llx p7=%016llx\n",
++		    (unsigned long long)dump[0], (unsigned long long)dump[1],
++		    (unsigned long long)dump[2], (unsigned long long)dump[3], (unsigned long long)dump[4],
++		    (unsigned long long)dump[5], (unsigned long long)dump[6], (unsigned long long)dump[7]);
++		sdbg_printed = true;
++	}
++#endif
+ 	if (page_offset + sizeof(uint32_t) == PAGE_SIZE_FOR_SR_SLIDE) {
+ 		/* If a pointer straddling the page boundary needs to be adjusted, then
+ 		 * add the slide to the lower half. The encoding guarantees that the upper
