@@ -12,6 +12,8 @@
 #define LABEL_COLS	8
 
 volatile uint32_t *con_fb = (volatile uint32_t *)FB_BASE;
+static uint32_t con_label_fg = YELLOW;
+static uint32_t con_value_fg = WHITE;
 static uint32_t con_bg;
 static int row;
 
@@ -66,10 +68,52 @@ void con_skip(void)
 	row++;
 }
 
+void con_set_row(int r)
+{
+	row = r;
+}
+
+void con_wrap(const char *s, uint32_t fg, int width)
+{
+	int col = 0;
+
+	while (*s) {
+		if (*s == ' ') {
+			s++;
+			continue;
+		}
+		const char *word = s;
+		int wlen = 0;
+
+		while (s[wlen] && s[wlen] != ' ')
+			wlen++;
+		if (col != 0 && col + wlen + 1 > width) {
+			row++;
+			col = 0;
+		}
+		if (col != 0) {
+			put_char(col, ' ', fg);
+			col++;
+		}
+		for (int i = 0; i < wlen; i++) {
+			put_char(col, word[i], fg);
+			col++;
+		}
+		s += wlen;
+	}
+	row++;
+}
+
+void con_set_scheme(uint32_t label, uint32_t value)
+{
+	con_label_fg = label;
+	con_value_fg = value;
+}
+
 void con_str(const char *label, const char *s)
 {
-	put_str(0, label, YELLOW);
-	put_str(LABEL_COLS, s, WHITE);
+	put_str(0, label, con_label_fg);
+	put_str(LABEL_COLS, s, con_value_fg);
 	row++;
 }
 
@@ -83,15 +127,15 @@ void con_hex(const char *label, uint64_t v)
 void con_hex2(const char *label, const char *a, uint32_t va, const char *b, uint32_t vb)
 {
 	char buf[9];
-	int col = put_str(0, label, YELLOW);
+	int col = put_str(0, label, con_label_fg);
 	col = col < LABEL_COLS ? LABEL_COLS : col + 1;
-	col = put_str(col, a, YELLOW);
+	col = put_str(col, a, con_label_fg);
 	fmt_hex(buf, va, 8);
-	col = put_str(col, buf, WHITE);
+	col = put_str(col, buf, con_value_fg);
 	if (b) {
-		col = put_str(col + 1, b, YELLOW);
+		col = put_str(col + 1, b, con_label_fg);
 		fmt_hex(buf, vb, 8);
-		put_str(col, buf, WHITE);
+		put_str(col, buf, con_value_fg);
 	}
 	row++;
 }

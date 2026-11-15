@@ -109,6 +109,64 @@ static void __attribute__((noreturn)) reset(unsigned after_s)
 
 /* ---- exceptions ---- */
 
+static const char *decode_ec(uint32_t ec)
+{
+	switch (ec) {
+	case 0x00: return "SP alignment";
+	case 0x09: return "BTI instruction";
+	case 0x0b: return "Hyp entry fail";
+	case 0x0c: return "BTI/PACSP fail";
+	case 0x0e: return "SVE trap";
+	case 0x11: return "WFx instruction";
+	case 0x14: return "SVC from AArch64";
+	case 0x15: return "SVC from AArch32";
+	case 0x16: return "HVC from AArch64";
+	case 0x17: return "SMC from AArch64";
+	case 0x18: return "system reg trap";
+	case 0x1c: return "SVE access trap";
+	case 0x20: return "instr abort lowest EL";
+	case 0x21: return "instr abort current EL";
+	case 0x22: return "PC alignment";
+	case 0x24: return "data abort lowest EL";
+	case 0x25: return "data abort current EL";
+	case 0x26: return "alignment fault";
+	case 0x29: return "SError/interrupt";
+	case 0x2d: return "debug exception lowest EL";
+	case 0x2e: return "debug exception current EL";
+	case 0x30: return "breakpoint lowest EL";
+	case 0x34: return "breakpoint current EL";
+	case 0x36: return "watchpoint current EL";
+	case 0x38: return "watchpoint current EL";
+	default:   return "unknown exception class";
+	}
+}
+
+static const char *decode_dfsc(uint32_t dfsc)
+{
+	switch (dfsc) {
+	case 0x00: return "reserved/attribution fault";
+	case 0x01: return "alignment fault";
+	case 0x02: return "attribution fault";
+	case 0x04: return "translation fault L0";
+	case 0x05: return "translation fault L1";
+	case 0x06: return "translation fault L2";
+	case 0x07: return "translation fault L3";
+	case 0x09: return "access flag fault L1";
+	case 0x0a: return "access flag fault L2";
+	case 0x0b: return "access flag fault L3";
+	case 0x0d: return "permission fault L1";
+	case 0x0e: return "permission fault L2";
+	case 0x0f: return "permission fault L3";
+	case 0x11: return "synchronous external abort L0";
+	case 0x13: return "synchronous external abort L1";
+	case 0x15: return "synchronous external abort L2";
+	case 0x19: return "synchronous external abort L3";
+	case 0x21: return "asynchronous external abort L3";
+	case 0x23: return "asynchronous external abort L3";
+	default:   return "other fault";
+	}
+}
+
 static void irq_handler(void)
 {
 	uint64_t iar = rsr("icc_iar1_el1");
@@ -116,6 +174,7 @@ static void irq_handler(void)
 
 	if (id >= 1020 && id <= 1023)
 		return;	/* spurious */
+
 	irq_last = id;
 	if (id == (uint32_t)irq_src)
 		irq_count++;
@@ -129,28 +188,88 @@ static void irq_handler(void)
 	isb();
 }
 
+static volatile int panic_in_progress;
+static void __attribute__((noreturn))
+panic_hang(void)
+{
+	for (;;) __asm__ volatile("wfi");
+}
+
 void exc_handler(uint64_t slot, uint64_t *regs)
 {
+	if (panic_in_progress)
+		panic_hang();
+	panic_in_progress = 1;
+
+	/* Turn the MMU off first: the vectors may be unreachable through it. */
+	uint64_t sctl = rsr("sctlr_el1");
+	if (sctl & 0x1) {
+		wsr("sctlr_el1", sctl & ~0x1ULL);
+		isb();
+	}
+
 	if (slot == 5) {	/* IRQ from current EL, SPx */
+		panic_in_progress = 0;
 		irq_handler();
 		return;
 	}
-	con_clear(BLUE);
-	switch (slot & 3) {
-	case 0: con_str("PANIC", "SYNC"); break;
-	case 1: con_str("PANIC", "IRQ"); break;
-	case 2: con_str("PANIC", "FIQ"); break;
-	default: con_str("PANIC", "SERROR"); break;
-	}
-	con_hex2("SLOT", "n=", slot, "cpu=", rsr("mpidr_el1"));
+
+	con_clear(WHITE);
+	con_set_scheme(BLACK, BLACK);
+	con_set_row(0);
+	con_wrap("xnuL Panic!", BLACK, 42);
+	con_set_row(2);
+	con_wrap("It seems something has happened. An unexpected situation has arisen, and xnuL's work has been suspended. Information regarding the reasons and other details will be provided below:",
+		   BLACK, 42);
+	con_skip();
+
+	uint64_t mpidr = rsr("mpidr_el1");
+	uint64_t daif  = rsr("daif");
+	uint64_t sp;
+	__asm__ volatile("mov %0, sp" : "=r"(sp));
+	uint64_t cur_el = rsr("currentel") >> 2;
+	uint64_t esr    = rsr("esr_el1");
+	uint32_t ec     = (uint32_t)((esr >> 26) & 0x3f);
+	uint32_t iss    = (uint32_t)(esr & 0x1ffffff);
+
+	con_hex2("SLOT", "n=", slot, "cpu=", (uint32_t)(mpidr & 0xffffffffU));
 	con_str("STAGE", stage);
-	con_hex("ESR", rsr("esr_el1"));
-	con_hex("ELR", rsr("elr_el1"));
-	con_hex("FAR", rsr("far_el1"));
-	con_hex("SPSR", rsr("spsr_el1"));
-	con_hex("X0", regs[0]);
-	con_hex("X1", regs[1]);
-	con_hex("X30", regs[29]);	/* stashed lr is just above the frame */
+	con_hex("MPIDR", mpidr);
+	con_hex("DAIF",  daif);
+	con_hex("CEL",   cur_el);
+	con_hex("VBAR",  rsr("vbar_el1"));
+	con_hex("SCTLR", rsr("sctlr_el1"));
+	con_hex("TCR",   rsr("tcr_el1"));
+	con_hex("TTBR0", rsr("ttbr0_el1"));
+	con_hex("TTBR1", rsr("ttbr1_el1"));
+	con_hex("MAIR",  rsr("mair_el1"));
+	con_hex("ESR",   esr);
+	con_str("  EC",  decode_ec(ec));
+	con_str("  DFSC", decode_dfsc(iss & 0x3f));
+	con_hex("ELR",   rsr("elr_el1"));
+	con_hex("FAR",   rsr("far_el1"));
+	con_hex("SPSR",  rsr("spsr_el1"));
+	con_hex("SP",    sp);
+	con_hex("X0",    regs[0]);
+	con_hex("X1",    regs[1]);
+	con_hex("X2",    regs[2]);
+	con_hex("X3",    regs[3]);
+	con_hex("X4",    regs[4]);
+	con_hex("X5",    regs[5]);
+	con_hex("X6",    regs[6]);
+	con_hex("X7",    regs[7]);
+	con_hex("X29",   regs[30]);
+	con_hex("X30",   regs[31]);
+	con_str("STACK", "contents around SP:");
+	for (int i = -4; i < 5; i++) {
+		char lab[8];
+		int off = i * 8, p = 0;
+		if (off >= 0) { lab[p++] = '+'; } else { lab[p++] = '-'; off = -off; }
+		if (off < 10) lab[p++] = (char)('0' + off);
+		else { lab[p++] = (char)('0' + off / 10); lab[p++] = (char)('0' + off % 10); }
+		lab[p] = 0;
+		con_hex(lab, *(volatile uint64_t *)(sp + (int64_t)i * 8));
+	}
 	reset(40);
 }
 
@@ -369,6 +488,110 @@ static void test_gic(void)
 	isb();
 }
 
+
+/* ---- minimal 64K-page MMU probe (48-bit EL1, TG0/TG1=64K) ---- */
+extern char _head[]; extern char _start[]; extern char _end[];
+extern char _bss_start[]; extern char _bss_end[]; extern char _stack_top[];
+extern char vectors[];
+
+static uint64_t probe_id_l1_64k[64]    __attribute__((aligned(65536)));
+static uint64_t probe_id_l2_64k[8192]  __attribute__((aligned(65536)));
+static uint64_t probe_l1_64k[64]    __attribute__((aligned(65536)));
+static uint64_t probe_l2_64k[8192]  __attribute__((aligned(65536)));
+static uint64_t probe_l3_64k[8192]  __attribute__((aligned(65536)));
+static uint8_t  probe_page[65536]   __attribute__((aligned(65536)));
+
+static void
+probe16k(void)
+{
+	stage = "16kprobe";
+	uint64_t sp;
+	__asm__ volatile("mov %0, sp" : "=r"(sp));
+	for (uint32_t i = 0; i < sizeof(probe_page); i++) probe_page[i] = (uint8_t)(0x5a + (i & 0xff));
+
+	con_hex("lohead", (uint64_t)(uintptr_t)_head);
+	con_hex("start ", (uint64_t)(uintptr_t)_start);
+	con_hex("vectors", (uint64_t)(uintptr_t)vectors);
+	con_hex("_end  ", (uint64_t)(uintptr_t)_end);
+	con_hex("_stack", (uint64_t)(uintptr_t)_stack_top);
+	con_hex("sp    ", sp);
+	con_hex("ppage ", (uint64_t)(uintptr_t)probe_page);
+
+	/* ---- low-half (TTBR0) 64KB-granule identity map ----
+	 *  64KB granule, 48-bit VA: L1 indexed by bits[47:42] (64 entries, 4 TB
+	 *  each), L2 by bits[41:29] (8192 entries, 512 MB each, blocks allowed),
+	 *  L3 by bits[28:16] (8192 entries, 64 KB pages).
+	 *  For VA=PA we use 512 MB L2 block descriptors:
+	 *    0x40000000..0x5FFFFFFF - LK/xnuL/FB; 0x60000000..0x7FFFFFFF spare. */
+	for (uint32_t i = 0; i < 64; i++)   probe_id_l1_64k[i] = 0;
+	for (uint32_t i = 0; i < 8192; i++) probe_id_l2_64k[i] = 0;
+	probe_id_l1_64k[0] = (uint64_t)(uintptr_t)probe_id_l2_64k | 0x3 | (1ULL << 10);
+	for (uint64_t pa = 0x40000000ULL; pa < 0x80000000ULL; pa += 0x20000000ULL) {
+		probe_id_l2_64k[pa >> 29] = pa | 0x1 | (3ULL << 8) | (1ULL << 10);
+	}
+
+	/* ---- high-half (TTBR1) 64KB-granule single-page map for the test VA ----
+	 *  ARM ARM: 64KB granule uses 3 levels; L1 indexed by VA[47:42]
+	 *  (64 entries), L2 by VA[41:29] (8192 entries, block or table),
+	 *  L3 by VA[28:16] (8192 entries, 64KB page descriptor);
+	 *  page offset bits[15:0]. */
+	for (uint32_t i = 0; i < 64; i++)   probe_l1_64k[i] = 0;
+	for (uint32_t i = 0; i < 8192; i++) probe_l2_64k[i] = 0;
+	for (uint32_t i = 0; i < 8192; i++) probe_l3_64k[i] = 0;
+	uint64_t va = 0xfffff802000040ULL;
+	uint64_t i1 = (va >> 42) & 0x3fULL;     /* L1 idx: bits[47:42] */
+	uint64_t i2 = (va >> 29) & 0x1fffULL;   /* L2 idx: bits[41:29] */
+	uint64_t i3 = (va >> 16) & 0x1fffULL;   /* L3 idx: bits[28:16] */
+	uint64_t pa = (uint64_t)(uintptr_t)probe_page;
+	probe_l1_64k[i1] = (uint64_t)(uintptr_t)probe_l2_64k | 0x3 | (1ULL << 10);
+	probe_l2_64k[i2] = (uint64_t)(uintptr_t)probe_l3_64k | 0x3 | (1ULL << 10);
+	/* 64KB page descriptor: PA at bits[47:16], type=page (0b11), AF */
+	probe_l3_64k[i3] = pa | 0x3 | (1ULL << 10) | (3ULL << 8);
+	con_hex2("IDX", "i1=", (uint32_t)i1, "i2=", (uint32_t)i2);
+	con_hex2("     ", "i3=", (uint32_t)i3, "off=", (uint32_t)(va & 0xffff));
+
+	/* MAIR_EL1: attr0 = Normal WBWA (0xff), attr1 = Device nGnRE (0x04) */
+	wsr("mair_el1", 0xffULL | (0x04ULL << 8));
+	/* TCR_EL1: T0SZ/T1SZ=16 (48-bit), TG0=0b00 (4K), TG1=0b01 (16K),
+	 *  SH0/SH1 = inner shareable, IRGN/ORGN = WBWA */
+	wsr("tcr_el1",
+		((uint64_t)16 << 0) | ((uint64_t)16 << 16)
+		| (1ULL << 14)          /* TG0 = 0b01 (64K low) */
+		| (3ULL << 30)          /* TG1 = 0b11 (64K high) */
+		| ((uint64_t)3 << 8) | ((uint64_t)3 << 24)
+		| ((uint64_t)1 << 10) | ((uint64_t)1 << 26)
+		| ((uint64_t)3 << 12) | ((uint64_t)3 << 28)
+	);
+	wsr("ttbr0_el1", (uint64_t)(uintptr_t)probe_id_l1_64k);
+	wsr("ttbr1_el1", (uint64_t)(uintptr_t)probe_l1_64k);
+	isb();
+	__asm__ volatile("tlbi vmalle1is" ::: "memory");
+	__asm__ volatile("dsb sy" ::: "memory");
+	__asm__ volatile("isb" ::: "memory");
+
+	uint64_t sctl = rsr("sctlr_el1");
+	con_hex("SCLTR  ", sctl);
+	/* enable MMU (M bit only) */
+	wsr("sctlr_el1", sctl | 0x1ULL);
+	isb();
+	con_hex("MMU_ON", rsr("sctlr_el1"));
+
+	/* low-half read through identity map: expects 0x5a5a5a5a5a5a5a5a */
+	uint64_t lval = *(volatile uint64_t *)(uintptr_t)probe_page;
+	con_hex("L_VAL  ", lval);
+
+	/* high-half read through 16K tables: expects 0x5a5a5a5a5a5a5a5a */
+	uint64_t hval = *(volatile uint64_t *)(uint64_t)va;
+	con_hex("H_VAL  ", hval);
+
+	/* disable MMU, restore original SCTLR bits (M bit back to 0) */
+	wsr("sctlr_el1", sctl);
+	isb();
+	con_hex("MMU_OFF", rsr("sctlr_el1"));
+
+	for (;;) __asm__ volatile("wfi");
+}
+
 /* ---- main ---- */
 
 void xnul_main(uint64_t dtb)
@@ -380,6 +603,11 @@ void xnul_main(uint64_t dtb)
 	con_str("xnu loader for angelica", "");
 	con_hex2("MIDR", "id=", (uint32_t)rsr("midr_el1"),
 		 "mmfr0=", (uint32_t)rsr("id_aa64mmfr0_el1"));
+	con_hex2("MMFR", "mmfr0=", (uint32_t)rsr("id_aa64mmfr0_el1"),
+		 "mmfr1=", (uint32_t)rsr("id_aa64mmfr1_el1"));
+	con_hex2("PFR", "pfr0=", (uint32_t)rsr("id_aa64pfr0_el1"),
+		 "pfr1=", (uint32_t)rsr("id_aa64pfr1_el1"));
+	probe16k();
 	con_skip();
 	const char *why = loader_boot(dtb);
 	con_str("LOADER", why);
@@ -394,6 +622,22 @@ void xnul_main(uint64_t dtb)
 	con_hex("CNTFRQ", rsr("cntfrq_el0"));
 	con_hex2("MIDR", "id=", (uint32_t)rsr("midr_el1"),
 		 "mmfr0=", (uint32_t)rsr("id_aa64mmfr0_el1"));
+	con_skip();
+	{
+		stage = "tcr";
+		uint64_t t0 = rsr("tcr_el1");
+		wsr("tcr_el1", (t0 & ~(((uint64_t)0x3 << 14) | ((uint64_t)0x3 << 30))) | ((uint64_t)2 << 14) | ((uint64_t)1 << 30));
+		isb();
+		uint64_t t16k = rsr("tcr_el1");
+		wsr("tcr_el1", (t16k & ~(((uint64_t)0x3 << 14) | ((uint64_t)0x3 << 30))) | ((uint64_t)1 << 14) | ((uint64_t)3 << 30));
+		isb();
+		uint64_t t64k = rsr("tcr_el1");
+		wsr("tcr_el1", (t64k & ~(((uint64_t)0xff << 14) | ((uint64_t)0xff << 30))) | t0);
+		isb();
+		uint64_t tback = rsr("tcr_el1");
+		con_hex2("TCR", "init=", (uint32_t)t0, "16K=", (uint32_t)t16k);
+		con_hex2("TCR", "64K=", (uint32_t)t64k, "rst=", (uint32_t)tback);
+	}
 	con_skip();
 	con_hex2("PSCI", "ver=", (uint32_t)smc(PSCI_VERSION, 0, 0, 0),
 		 "smccc=", (uint32_t)smc(SMCCC_VERSION, 0, 0, 0));
