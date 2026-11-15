@@ -1,0 +1,39 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -3520,8 +3520,36 @@
+ 		tt_free_entry_t *tt_free_cur, *tt_free_next;
+ 
+ 		tt_free_cur = ((tt_free_entry_t *)pmap->tt_entry_free);
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++		{
++			vm_offset_t cur = (vm_offset_t)tt_free_cur;
++			const pt_attr_t * const pt_attr = pmap_get_pt_attr(pmap);
++			if (__improbable((cur & (pt_attr_page_size(pt_attr) - 1)) != 0)) {
++				panic("%s: tt_entry_free=%p is not hardware-page aligned", __func__, tt_free_cur);
++			}
++			pv_entry_t **pvh = pai_to_pvh(pa_index(ml_static_vtop(cur)));
++			if (__improbable(!pvh_test_type(pvh, PVH_TYPE_PTDP))) {
++				panic("%s: tt_entry_free=%p has pvh=%p not PTDP",
++				    __func__, tt_free_cur, (void *)*pvh);
++			}
++			tt_entry_t *ptep = (tt_entry_t *)tt_free_cur;
++			pt_desc_t *ptdp = pvh_ptd(pvh);
++			const unsigned int pt_index = ptd_get_index(ptdp, ptep);
++			if (__improbable(ptdp->ptd_info[pt_index].refcnt != 0)) {
++				panic("%s: tt_entry_free=%p refcnt=%u pmap=%p ptdp=%p index=%u",
++				    __func__, tt_free_cur, ptdp->ptd_info[pt_index].refcnt, pmap, ptdp, pt_index);
++			}
++			if (__improbable(ptdp->va[pt_index] != (vm_offset_t)-1)) {
++				panic("%s: tt_entry_free=%p va=0x%llx index=%u pmap=%p ptdp=%p",
++				    __func__, tt_free_cur, (uint64_t)ptdp->va[pt_index], pt_index, pmap, ptdp);
++			}
++		}
++#endif
++
+ 		tt_free_next = tt_free_cur->next;
+ 		tt_free_cur->next = NULL;
++		memset(tt_free_cur, 0, pt_attr_page_size(pmap_get_pt_attr(pmap)));
++		__builtin_arm_dmb(DMB_ISHST);
+ 		*ttp = (tt_entry_t *)tt_free_cur;
+ 		pmap->tt_entry_free = (tt_entry_t *)tt_free_next;
+ 	}
