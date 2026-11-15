@@ -1,0 +1,39 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -3380,6 +3380,8 @@
+ 	pmap_simple_unlock(&tt1_lock);
+ 
+ 	if (tt1 != NULL) {
++		memset(tt1, 0, size);
++		__builtin_arm_dmb(DMB_ISHST);
+ 		pmap_tt_ledger_credit(pmap, size);
+ 		return (tt_entry_t *)tt1;
+ 	}
+@@ -6731,6 +6733,12 @@
+ 	unsigned int ttlevel,
+ 	boolean_t alloc_ptd)
+ {
++	const pt_attr_t * const pt_attr = pmap_get_pt_attr(pmap);
++	unsigned int ptes = pt_attr_page_size(pt_attr) / sizeof(pt_entry_t);
++	for (unsigned int i = 0; i < ptes; i++) {
++		pte_p[i] = ARM_PTE_TYPE_FAULT;
++	}
++
+ 	pt_desc_t   *ptdp = NULL;
+ 	pv_entry_t **pvh = pai_to_pvh(pa_index(ml_static_vtop((vm_offset_t)pte_p)));
+ 
+@@ -6753,6 +6761,14 @@
+ 		}
+ 	} else if (pvh_test_type(pvh, PVH_TYPE_PTDP)) {
+ 		ptdp = pvh_ptd(pvh);
++		const unsigned int pt_index = ptd_get_index(ptdp, pte_p);
++		if (__improbable(ptdp->ptd_info[pt_index].refcnt != 0)) {
++			panic("%s: recycled page table has refcnt=%u pmap=%p ptdp=%p ptep=%p",
++			    __func__, ptdp->ptd_info[pt_index].refcnt, pmap, ptdp, pte_p);
++		}
++		ptdp->va[pt_index] = (vm_offset_t)-1;
++		ptdp->ptd_info[pt_index].refcnt = 0;
++		ptdp->ptd_info[pt_index].wiredcnt = 0;
+ 	} else {
+ 		panic("pmap_init_pte_page(): invalid PVH type for pte_p %p", pte_p);
+ 	}
