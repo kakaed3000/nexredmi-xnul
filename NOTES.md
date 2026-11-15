@@ -31,6 +31,24 @@ history.
   skipped then as well. `backup-rebrand-broken` (c13b2fc) preserves the broken
   rebrand for reference.
 
+## 2026-11-15 — boot crashes every process at dyld level
+- Boot reaches SpringBoard spawn (launchd fine, exec fine), then every
+  userspace process crashes at dyld stage: SpringBoard ns 6 code 0x9
+  "file does not start with MH_MAGIC[_64]: 0xE931CA62 0xA870F060";
+  sharingd exc 10 pc=0x1cee55b0c; navd ns 2 code 0xa; WirelessRadioManagerd
+  exc 2/10 far=0x101288008; then kernel panics with Kernel data abort in
+  _devsw_lock+0xbc (pc 0xfffffff0079346dc).
+- All these processes die identically at dyld-load time on the SHARED CACHE
+  page — same file, same offset, same bytes delivered: 0xE931CA62 vs
+  the expected 64-bit dyld_v1 magic. MSDC either returns those bytes or the
+  page cache got poisoned. The image on the host is sha256-verified
+  (569ecf36…); all cached files on the image start with dyld_v1 arm64.
+- 0189 (ANGELICA CS) will dump pid/vnode/offset/pa/first-64-bytes of the
+  corrupted page on the next "Text page corruption detected" event — we will
+  then know exactly which vnode/offset, and can compare against the host image.
+- 0187 (exc-pmap-diag) and 0188 (tt page zero) removed at user request: they
+  correlate with the super-early zone_require_ro panic that became dominant.
+
 ## 2026-11-14 (cont. II) — panic chain identified; 0185 adds panic backtrace
 
 - Boot reached SpringBoard spawn and userland waves; the phone is alive until
