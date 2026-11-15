@@ -1,0 +1,21 @@
+--- a/osfmk/arm/pmap/pmap_data.c
++++ b/osfmk/arm/pmap/pmap_data.c
+@@ -1384,6 +1384,18 @@
+ 
+ 	*pa = (pmap_paddr_t)ptoa(VM_PAGE_GET_PHYS_PAGE(mem));
+ 
++#if defined(ARM64_BOARD_CONFIG_ANGELICA)
++	{
++		pv_entry_t **pvh = pai_to_pvh(pa_index(*pa));
++		if (__improbable(pvh_test_type(pvh, PVH_TYPE_PTDP))) {
++			pt_desc_t *ptdp = pvh_ptd(pvh);
++			panic("%s: allocated PTDP page pa=0x%llx pvh=%p refcnt=%u wiredcnt=%u pmap=%p ptdp=%p",
++			    __func__, (uint64_t)*pa, (void *)*pvh, ptdp->ptd_info[0].refcnt,
++			    ptdp->ptd_info[0].wiredcnt, ptdp->pmap, ptdp);
++		}
++	}
++#endif
++
+ 	/* Add the allocated VM page(s) to the pmap's VM object. */
+ 	pmap_enqueue_pages(mem);
+ 
