@@ -1,10 +1,14 @@
+diff --git a/osfmk/vm/vm_fault.c b/osfmk/vm/vm_fault.c
+index 0000000..0000000 100644
 --- a/osfmk/vm/vm_fault.c
 +++ b/osfmk/vm/vm_fault.c
-@@ -8263,6 +8263,21 @@
+@@ -8263,5 +8263,22 @@
  	 * other flags to check on object or page?
  	 */
  	if (page->vmp_cs_tainted != VMP_CS_ALL_FALSE) {
 +		{
++			extern const char *vnode_getname(vnode_t vp);
++
 +			uint64_t pa = ptoa(VM_PAGE_GET_PHYS_PAGE(page));
 +			const u_char *bp = (const u_char *)phystokv((pmap_paddr_t)pa);
 +			uint64_t i;
