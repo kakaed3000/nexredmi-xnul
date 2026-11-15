@@ -5,11 +5,19 @@
 #include "console.h"
 #include "font.h"
 
-#define SCALE		2
-#define CH_W		(8 * SCALE)
-#define CH_H		(16 * SCALE)
 #define MARGIN		8
 #define LABEL_COLS	8
+
+static volatile uint32_t con_scale = 2;
+
+static int con_ch_w(void) { return 8 * con_scale; }
+static int con_ch_h(void) { return 16 * con_scale; }
+
+void con_set_scale(uint32_t scale)
+{
+	if (scale >= 1 && scale <= 4)
+		con_scale = scale;
+}
 
 volatile uint32_t *con_fb = (volatile uint32_t *)FB_BASE;
 static uint32_t con_label_fg = YELLOW;
@@ -28,22 +36,24 @@ void con_clear(uint32_t bg)
 	row = 0;
 }
 
-static void put_char(int col, char ch, uint32_t fg)
+static void put_char(int col, char c, uint32_t fg)
 {
-	if (ch < 0x20 || ch > 0x7e)
-		ch = '?';
-	const unsigned char *g = font8x16[ch - 0x20];
-	int x0 = MARGIN + col * CH_W, y0 = MARGIN + row * CH_H;
-	if (x0 + CH_W > FB_W || y0 + CH_H > FB_H)
+	if (c < 0x20 || c > 0x7e)
+		c = '?';
+	const unsigned char *g = font8x16[c - 0x20];
+	int cw = con_ch_w();
+	int chh = con_ch_h();
+	int x0 = MARGIN + col * cw, y0 = MARGIN + row * chh;
+	if (x0 + cw > FB_W || y0 + chh > FB_H)
 		return;
 	for (int gy = 0; gy < 16; gy++)
 		for (int gx = 0; gx < 8; gx++) {
-			uint32_t c = (g[gy] & (0x80 >> gx)) ? fg : con_bg;
-			for (int sy = 0; sy < SCALE; sy++) {
-				volatile uint32_t *p = con_fb + (y0 + gy * SCALE + sy) * (FB_STRIDE / 4)
-						       + x0 + gx * SCALE;
-				for (int sx = 0; sx < SCALE; sx++)
-					p[sx] = c;
+			uint32_t pc = (g[gy] & (0x80 >> gx)) ? fg : con_bg;
+			for (int sy = 0; sy < (int)con_scale; sy++) {
+				volatile uint32_t *p = con_fb + (y0 + gy * con_scale + sy) * (FB_STRIDE / 4)
+						       + x0 + gx * con_scale;
+				for (int sx = 0; sx < (int)con_scale; sx++)
+					p[sx] = pc;
 			}
 		}
 }

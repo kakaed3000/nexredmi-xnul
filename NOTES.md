@@ -1,5 +1,41 @@
 # xnuL — working notes (angelica)
 
+## 2026-11-15 — bare-metal MMU probe: 4K and 64K work, 16K does not (CONFIRMED)
+
+Hardware evidence (xnuL-based minimal probe in xnul.c):
+
+| VA bits | TG0 (low) | TG1 (high) | Stage         | Result |
+|---------|-----------|------------|---------------|--------|
+| 36/47/48 | 0b10 (16K) | 0b01 (16K) | L0/L1/L2 start | **frozen at SCLTR print, no MMI, no panic** — chip holds instruction fetch at the same VA where it faulted; exception vectors are unreadable |
+| 39       | 0b00 (4K)  | 0b10 (4K)  | L1 start       | MMU_ON/MMU_OFF printed; L_VAL / H_VAL reads correct ✓ |
+| 42       | 0b01 (64K) | 0b11 (64K) | L2 start (PMD) | MMU_ON/MMU_OFF printed; L_VAL / H_VAL reads correct ✓ |
+| 48       | 0b01 (64K) | 0b11 (64K) | L1 start       | **frozen at SCLTR print** |
+
+- TCR_EL1 — bit-exact Linux (arch/arm64/mm/proc.S for 64K pages):
+  - IRGN0/1 = 1 (WBWA), ORGN0/1 = 1 (WBWA), SH0/1 = 3 (inner shareable)
+  - TG0/TG1 chosen per granule (4K/16K/64K)
+  - ASID16=1, TBI0=1, A1=1, IPS=PARANGE (bits[34:32] injected from
+    ID_AA64MMFR0_EL1.PARANGE; Helio G35 is PARANGE=0x2 = 40-bit)
+  - T0SZ/T1SZ = VA_BITS dependent (Linux defaults: VA_BITS=39 (4K), 47 (16K),
+    36 or 42 (64K))
+- **ID_AA64MMFR0_EL1 = 0x00001122** (PARANGE=0x2, ASID=0x2, BIGENDEL=1,
+   SNSMEM=1):
+  - TGRAN16 = bits[23:20] = 0x0 — Linux: `ID_AA64MMFR0_TGRAN16_NI` ("not
+    implemented"), Apple-A-series feature only, no exception possibility
+  - TGRAN64 = bits[27:24] = 0x0 — Linux: `TGRAN64_SUPPORTED`
+  - TGRAN4  = bits[31:28] = 0x0 — Linux: `TGRAN4_SUPPORTED`
+- SCTLR_EL1 reset value from LK = 0x30D00800 (matches Linux's RES1 subset for
+  EL1 reset). After `MSR SCTLR_EL1, xN` with M bit set, the chip fetches the
+  next instruction through the configured tables — if those are unsupported,
+  the instruction cannot execute, the exception vector is also unreachable,
+  and the CPU goes into an unrecoverable instruction-fetch loop. There is no
+  software recovery for that state on an A53 — only reset (button or PSCI).
+
+**Conclusion: use 64K (TG0=0b01, TG1=0b11) with VA_BITS=42 starting lookup at
+L2.** 4K granule works and is the Apple-supplied path for ARM64 TM machines, but
+per user preference 64K belongs in the next iOS image.
+
+
 Last updated **2026-11-14**. This file is the current handoff: status, active
 blocker, next actions, hardware facts and the commands that reproduce the last
 test. The long boot-by-boot bring-up log (2026-10-14 … 2026-11-01) is in git

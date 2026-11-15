@@ -54,7 +54,45 @@ static inline void wr8(uintptr_t a, uint8_t v) { *(volatile uint8_t *)a = v; }
 
 extern char secondary_entry[];
 
-static const char *stage;	/* set at runtime: no absolute pointers in data */
+static uint64_t dbg_t1d, dbg_t2d, dbg_t3d, dbg_pa;
+
+enum stage_tag {
+	TAG_UNKNOWN = 0,
+	TAG_BOOT,
+	TAG_LOADER,
+	TAG_DIAG,
+	TAG_TCR,
+	TAG_SMP,
+	TAG_GIC_SRE,
+	TAG_GIC_DIST,
+	TAG_GIC_REDIST,
+	TAG_GIC_CONFIG,
+	TAG_GIC_VTIMER,
+	TAG_GIC_SGI,
+	TAG_MM_PROBE,
+	TAG_DONE,
+};
+static volatile uint32_t stage_tag = TAG_BOOT;
+
+static const char *decode_stage(uint32_t t)
+{
+	switch (t) {
+	case TAG_BOOT: return "entry";
+	case TAG_LOADER: return "loader";
+	case TAG_DIAG: return "diag";
+	case TAG_TCR: return "tcr";
+	case TAG_SMP: return "smp";
+	case TAG_GIC_SRE: return "gic-sre";
+	case TAG_GIC_DIST: return "gic-dist";
+	case TAG_GIC_REDIST: return "gic-redist";
+	case TAG_GIC_CONFIG: return "gic-config";
+	case TAG_GIC_VTIMER: return "gic-vtimer";
+	case TAG_GIC_SGI: return "gic-sgi";
+	case TAG_MM_PROBE: return "mmprobe";
+	case TAG_DONE: return "done";
+	default: return "unknown";
+	}
+}
 static volatile uint64_t sec_mpidr[NR_CPUS];
 static volatile uint64_t sec_probe[4];	/* CPU1 redistributor write test */
 static volatile uint32_t irq_count, irq_other, irq_last;
@@ -216,11 +254,12 @@ void exc_handler(uint64_t slot, uint64_t *regs)
 
 	con_clear(WHITE);
 	con_set_scheme(BLACK, BLACK);
+	con_set_scale(2);
 	con_set_row(0);
-	con_wrap("xnuL Panic!", BLACK, 42);
+	con_wrap("xnuL Panic!", BLACK, 84);
 	con_set_row(2);
 	con_wrap("It seems something has happened. An unexpected situation has arisen, and xnuL's work has been suspended. Information regarding the reasons and other details will be provided below:",
-		   BLACK, 42);
+		   BLACK, 84);
 	con_skip();
 
 	uint64_t mpidr = rsr("mpidr_el1");
@@ -233,7 +272,7 @@ void exc_handler(uint64_t slot, uint64_t *regs)
 	uint32_t iss    = (uint32_t)(esr & 0x1ffffff);
 
 	con_hex2("SLOT", "n=", slot, "cpu=", (uint32_t)(mpidr & 0xffffffffU));
-	con_str("STAGE", stage);
+	con_str("STAGE", decode_stage(stage_tag));
 	con_hex("MPIDR", mpidr);
 	con_hex("DAIF",  daif);
 	con_hex("CEL",   cur_el);
@@ -255,11 +294,14 @@ void exc_handler(uint64_t slot, uint64_t *regs)
 	con_hex("X2",    regs[2]);
 	con_hex("X3",    regs[3]);
 	con_hex("X4",    regs[4]);
-	con_hex("X5",    regs[5]);
-	con_hex("X6",    regs[6]);
-	con_hex("X7",    regs[7]);
 	con_hex("X29",   regs[30]);
 	con_hex("X30",   regs[31]);
+	if (dbg_t2d || dbg_t3d) {
+		if (dbg_t1d) con_hex("T1D", dbg_t1d);
+		con_hex("T2D", dbg_t2d);
+		con_hex("T3D", dbg_t3d);
+		con_hex("PA ", dbg_pa);
+	}
 	con_str("STACK", "contents around SP:");
 	for (int i = -4; i < 5; i++) {
 		char lab[8];
@@ -327,7 +369,7 @@ static void disp_probe(void)
 
 static void __attribute__((unused)) test_smp(void)
 {
-	stage = "smp";
+	stage_tag = TAG_SMP;
 	uint64_t self = rsr("mpidr_el1") & 0xffffff;
 	int64_t ret[NR_CPUS];
 
@@ -428,7 +470,7 @@ static void irq_window(const char *label, uintptr_t r, int src)
 
 static void test_gic(void)
 {
-	stage = "gic sre";
+	stage_tag = TAG_GIC_SRE;
 	uint64_t sre = rsr("icc_sre_el1");
 	if (!(sre & 1)) {
 		wsr("icc_sre_el1", sre | 1);
@@ -439,14 +481,14 @@ static void test_gic(void)
 		return;
 	}
 
-	stage = "gic dist";
+	stage_tag = TAG_GIC_DIST;
 	uint32_t dctlr = rd32(GICD_BASE);
 	/* Non-secure view (DS=0): bit0 EnableGrp1, bit1 EnableGrp1A, bit4 ARE_NS; Linux writes 0x13 */
 	wr32(GICD_BASE, dctlr | 0x13);
 	gicd_wait_rwp();
 	con_hex2("GICD", "was=", dctlr, "now=", rd32(GICD_BASE));
 
-	stage = "gic redist";
+	stage_tag = TAG_GIC_REDIST;
 	uintptr_t r = find_gicr();
 	if (!r) {
 		con_str("GICR", "not found");
@@ -460,7 +502,7 @@ static void test_gic(void)
 	}
 	con_hex2("GICR", "base=", r, "waker=", rd32(r + GICR_WAKER));
 
-	stage = "gic config";
+	stage_tag = TAG_GIC_CONFIG;
 	uint32_t grp = rd32(r + GICR_IGROUPR0);
 	wr32(r + GICR_IGROUPR0, 0xffffffff);	/* NS view: secure bits are WI */
 	uint32_t en_before = rd32(r + GICR_ISENABLER0);
@@ -480,31 +522,30 @@ static void test_gic(void)
 	isb();
 	con_hex2("ICC", "ctlr=", ctlr, "grpen1=", rsr("icc_igrpen1_el1"));
 
-	stage = "gic vtimer";
+	stage_tag = TAG_GIC_VTIMER;
 	irq_window("VTIMER", r, VTIMER_INTID);
-	stage = "gic sgi";
+	stage_tag = TAG_GIC_SGI;
 	irq_window("SGI1", r, SGI_INTID);
 	wr32(r + GICR_ICENABLER0, 0xffffffff);
 	isb();
 }
 
 
-/* ---- minimal 64K-page MMU probe (48-bit EL1, TG0/TG1=64K) ---- */
+/* ---- minimal 4K-granule high-half MMU probe (39-bit VA, T1SZ=25) ---- */
 extern char _head[]; extern char _start[]; extern char _end[];
 extern char _bss_start[]; extern char _bss_end[]; extern char _stack_top[];
 extern char vectors[];
 
-static uint64_t probe_id_l1_64k[64]    __attribute__((aligned(65536)));
-static uint64_t probe_id_l2_64k[8192]  __attribute__((aligned(65536)));
-static uint64_t probe_l1_64k[64]    __attribute__((aligned(65536)));
-static uint64_t probe_l2_64k[8192]  __attribute__((aligned(65536)));
-static uint64_t probe_l3_64k[8192]  __attribute__((aligned(65536)));
-static uint8_t  probe_page[65536]   __attribute__((aligned(65536)));
+static uint64_t probe_id_l1_4k[512]  __attribute__((aligned(4096)));
+static uint64_t probe_l1_4k[512]   __attribute__((aligned(4096)));
+static uint64_t probe_l2_4k[512]   __attribute__((aligned(4096)));
+static uint64_t probe_l3_4k[512]   __attribute__((aligned(4096)));
+static uint8_t  probe_page[4096]      __attribute__((aligned(4096)));
 
 static void
 probe16k(void)
 {
-	stage = "16kprobe";
+	stage_tag = TAG_MM_PROBE;
 	uint64_t sp;
 	__asm__ volatile("mov %0, sp" : "=r"(sp));
 	for (uint32_t i = 0; i < sizeof(probe_page); i++) probe_page[i] = (uint8_t)(0x5a + (i & 0xff));
@@ -517,53 +558,53 @@ probe16k(void)
 	con_hex("sp    ", sp);
 	con_hex("ppage ", (uint64_t)(uintptr_t)probe_page);
 
-	/* ---- low-half (TTBR0) 64KB-granule identity map ----
-	 *  64KB granule, 48-bit VA: L1 indexed by bits[47:42] (64 entries, 4 TB
-	 *  each), L2 by bits[41:29] (8192 entries, 512 MB each, blocks allowed),
-	 *  L3 by bits[28:16] (8192 entries, 64 KB pages).
-	 *  For VA=PA we use 512 MB L2 block descriptors:
-	 *    0x40000000..0x5FFFFFFF - LK/xnuL/FB; 0x60000000..0x7FFFFFFF spare. */
-	for (uint32_t i = 0; i < 64; i++)   probe_id_l1_64k[i] = 0;
-	for (uint32_t i = 0; i < 8192; i++) probe_id_l2_64k[i] = 0;
-	probe_id_l1_64k[0] = (uint64_t)(uintptr_t)probe_id_l2_64k | 0x3 | (1ULL << 10);
-	for (uint64_t pa = 0x40000000ULL; pa < 0x80000000ULL; pa += 0x20000000ULL) {
-		probe_id_l2_64k[pa >> 29] = pa | 0x1 | (3ULL << 8) | (1ULL << 10);
-	}
+	/* low-half identity map: 4K granule, 1GB SECT blocks at L1 (covers VA
+	 * 0..512 GB, enough for xnuL Image + FB) */
+	for (uint32_t i = 0; i < 512; i++) probe_id_l1_4k[i] = 0;
+	for (uint32_t i = 0; i < 512; i++) probe_id_l1_4k[i] = ((uint64_t)i << 30) | 0x1 | (3ULL << 8) | (1ULL << 10);
 
-	/* ---- high-half (TTBR1) 64KB-granule single-page map for the test VA ----
-	 *  ARM ARM: 64KB granule uses 3 levels; L1 indexed by VA[47:42]
-	 *  (64 entries), L2 by VA[41:29] (8192 entries, block or table),
-	 *  L3 by VA[28:16] (8192 entries, 64KB page descriptor);
-	 *  page offset bits[15:0]. */
-	for (uint32_t i = 0; i < 64; i++)   probe_l1_64k[i] = 0;
-	for (uint32_t i = 0; i < 8192; i++) probe_l2_64k[i] = 0;
-	for (uint32_t i = 0; i < 8192; i++) probe_l3_64k[i] = 0;
-	uint64_t va = 0xfffff802000040ULL;
-	uint64_t i1 = (va >> 42) & 0x3fULL;     /* L1 idx: bits[47:42] */
-	uint64_t i2 = (va >> 29) & 0x1fffULL;   /* L2 idx: bits[41:29] */
-	uint64_t i3 = (va >> 16) & 0x1fffULL;   /* L3 idx: bits[28:16] */
+	/* high half 4K granule test page; T1SZ=25 => VA_BITS=39, initial lookup at L1 (L0 skipped) */
+	for (uint32_t i = 0; i < 512; i++) probe_l1_4k[i] = 0;
+	for (uint32_t i = 0; i < 512; i++) probe_l2_4k[i] = 0;
+	for (uint32_t i = 0; i < 512; i++) probe_l3_4k[i] = 0;
+	uint64_t va = 0xffffffffff523040ULL;
+	uint64_t i1 = (va >> 30) & 0x1ffULL;
+	uint64_t i2 = (va >> 21) & 0x1ffULL;
+	uint64_t i3 = (va >> 12) & 0x1ffULL;
 	uint64_t pa = (uint64_t)(uintptr_t)probe_page;
-	probe_l1_64k[i1] = (uint64_t)(uintptr_t)probe_l2_64k | 0x3 | (1ULL << 10);
-	probe_l2_64k[i2] = (uint64_t)(uintptr_t)probe_l3_64k | 0x3 | (1ULL << 10);
-	/* 64KB page descriptor: PA at bits[47:16], type=page (0b11), AF */
-	probe_l3_64k[i3] = pa | 0x3 | (1ULL << 10) | (3ULL << 8);
+	probe_l1_4k[i1] = (uint64_t)(uintptr_t)probe_l2_4k | 0x3 | (1ULL << 10);
+	probe_l2_4k[i2] = (uint64_t)(uintptr_t)probe_l3_4k | 0x3 | (1ULL << 10);
+	probe_l3_4k[i3] = pa | 0x3 | (1ULL << 10) | (3ULL << 8);
+	dbg_t1d = probe_l1_4k[i1];
+	dbg_t2d = probe_l2_4k[i2];
+	dbg_t3d = probe_l3_4k[i3];
+	dbg_pa  = pa;
+	con_hex("T1D", dbg_t1d);
+	con_hex("T2D", dbg_t2d);
+	con_hex("T3D", dbg_t3d);
+	con_hex("PA ", dbg_pa);
 	con_hex2("IDX", "i1=", (uint32_t)i1, "i2=", (uint32_t)i2);
-	con_hex2("     ", "i3=", (uint32_t)i3, "off=", (uint32_t)(va & 0xffff));
+	con_hex2("     ", "i3=", (uint32_t)i3, "off=", (uint32_t)(va & 0xfff));
 
-	/* MAIR_EL1: attr0 = Normal WBWA (0xff), attr1 = Device nGnRE (0x04) */
+	/* MAIR_EL1 */
 	wsr("mair_el1", 0xffULL | (0x04ULL << 8));
-	/* TCR_EL1: T0SZ/T1SZ=16 (48-bit), TG0=0b00 (4K), TG1=0b01 (16K),
-	 *  SH0/SH1 = inner shareable, IRGN/ORGN = WBWA */
-	wsr("tcr_el1",
-		((uint64_t)16 << 0) | ((uint64_t)16 << 16)
-		| (1ULL << 14)          /* TG0 = 0b01 (64K low) */
-		| (3ULL << 30)          /* TG1 = 0b11 (64K high) */
-		| ((uint64_t)3 << 8) | ((uint64_t)3 << 24)
-		| ((uint64_t)1 << 10) | ((uint64_t)1 << 26)
-		| ((uint64_t)3 << 12) | ((uint64_t)3 << 28)
-	);
-	wsr("ttbr0_el1", (uint64_t)(uintptr_t)probe_id_l1_64k);
-	wsr("ttbr1_el1", (uint64_t)(uintptr_t)probe_l1_64k);
+	/* TCR: 39-bit VA, TG0=0b00 (4K low), TG1=0b10 (4K high), Linux-exact */
+	uint64_t parange = rsr("id_aa64mmfr0_el1") & 0xfULL;
+	uint64_t ips = (parange & 0x7ULL) << 32;
+	uint64_t tcr = ((uint64_t)25)            /* T0SZ = 25 (39-bit VA) */
+		| ((uint64_t)25 << 16)              /* T1SZ */
+		| ((uint64_t)1 << 8) | ((uint64_t)1 << 24)    /* IRGN0/1 WBWA */
+		| ((uint64_t)1 << 10) | ((uint64_t)1 << 26)   /* ORGN0/1 WBWA */
+		| ((uint64_t)3 << 12) | ((uint64_t)3 << 28)   /* SH0/1 inner */
+		| ((uint64_t)2 << 30)                                 /* TG1 = 4K */
+		| ((uint64_t)1 << 22)                                 /* A1 */
+		| ((uint64_t)1 << 36)                                 /* ASID16 */
+		| ((uint64_t)1 << 37)                                 /* TBI0 */
+		| ips;
+	wsr("tcr_el1", tcr);
+	/* TTBR0 stays the working 64K-granule low-half identity map */
+	wsr("ttbr0_el1", (uint64_t)(uintptr_t)probe_id_l1_4k);
+	wsr("ttbr1_el1", (uint64_t)(uintptr_t)probe_l1_4k);
 	isb();
 	__asm__ volatile("tlbi vmalle1is" ::: "memory");
 	__asm__ volatile("dsb sy" ::: "memory");
@@ -571,20 +612,16 @@ probe16k(void)
 
 	uint64_t sctl = rsr("sctlr_el1");
 	con_hex("SCLTR  ", sctl);
-	/* enable MMU (M bit only) */
 	wsr("sctlr_el1", sctl | 0x1ULL);
 	isb();
 	con_hex("MMU_ON", rsr("sctlr_el1"));
 
-	/* low-half read through identity map: expects 0x5a5a5a5a5a5a5a5a */
 	uint64_t lval = *(volatile uint64_t *)(uintptr_t)probe_page;
 	con_hex("L_VAL  ", lval);
 
-	/* high-half read through 16K tables: expects 0x5a5a5a5a5a5a5a5a */
 	uint64_t hval = *(volatile uint64_t *)(uint64_t)va;
 	con_hex("H_VAL  ", hval);
 
-	/* disable MMU, restore original SCTLR bits (M bit back to 0) */
 	wsr("sctlr_el1", sctl);
 	isb();
 	con_hex("MMU_OFF", rsr("sctlr_el1"));
@@ -597,7 +634,7 @@ probe16k(void)
 void xnul_main(uint64_t dtb)
 {
 	/* An xnu payload in the ramdisk means: boot it (MMU stays off). */
-	stage = "loader";
+	stage_tag = TAG_LOADER;
 	con_clear(BLACK);
 	disp_probe();
 	con_str("xnu loader for angelica", "");
@@ -614,7 +651,7 @@ void xnul_main(uint64_t dtb)
 	con_skip();
 
 	/* No payload: hardware facts, then the SMP and GIC timer tests. */
-	stage = "diag";
+	stage_tag = TAG_DIAG;
 	con_hex2("EL", "cur=", (uint32_t)(rsr("currentel") >> 2),
 		 "mpidr=", (uint32_t)rsr("mpidr_el1"));
 	con_hex2("DTB", "at=", (uint32_t)dtb, "magic=",
@@ -624,7 +661,7 @@ void xnul_main(uint64_t dtb)
 		 "mmfr0=", (uint32_t)rsr("id_aa64mmfr0_el1"));
 	con_skip();
 	{
-		stage = "tcr";
+		stage_tag = TAG_TCR;
 		uint64_t t0 = rsr("tcr_el1");
 		wsr("tcr_el1", (t0 & ~(((uint64_t)0x3 << 14) | ((uint64_t)0x3 << 30))) | ((uint64_t)2 << 14) | ((uint64_t)1 << 30));
 		isb();
@@ -642,7 +679,7 @@ void xnul_main(uint64_t dtb)
 	con_hex2("PSCI", "ver=", (uint32_t)smc(PSCI_VERSION, 0, 0, 0),
 		 "smccc=", (uint32_t)smc(SMCCC_VERSION, 0, 0, 0));
 	con_skip();
-	stage = "done";
+	stage_tag = TAG_DONE;
 	con_str("DIAG", "display takeover done");
 	for (;;)
 		__asm__ volatile("wfe");
