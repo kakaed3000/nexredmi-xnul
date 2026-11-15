@@ -1,0 +1,149 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -512,22 +512,12 @@
+ 
+ /* PTE Define Macros */
+ 
+-/* ANGELICA: don't panic on unexpected bits in invalid PTEs; our 4K/16K port
+- * sometimes leaves leftover bits in otherwise-invalid mappings. Treat those
+- * entries as not compressed instead of bringing the machine down. */
+-#if defined(ARM64_BOARD_CONFIG_ANGELICA)
+-#define ARM_PTE_IS_COMPRESSED(x, p) \
+-	((((x) & 0x3) == 0) && /* PTE is not valid... */                      \
+-	 ((x) & ARM_PTE_COMPRESSED) && /* ...has "compressed" marker" */      \
+-	 (!((x) & ~ARM_PTE_COMPRESSED_MASK)))
+-#else
+ #define ARM_PTE_IS_COMPRESSED(x, p) \
+ 	((((x) & 0x3) == 0) && /* PTE is not valid... */                      \
+ 	 ((x) & ARM_PTE_COMPRESSED) && /* ...has "compressed" marker" */      \
+ 	 ((!((x) & ~ARM_PTE_COMPRESSED_MASK)) || /* ...no other bits */       \
+ 	 (panic("compressed PTE %p 0x%llx has extra bits 0x%llx: corrupted?", \
+ 	        (p), (x), (x) & ~ARM_PTE_COMPRESSED_MASK), FALSE)))
+-#endif
+ 
+ #define pte_is_wired(pte)                                                               \
+ 	(((pte) & ARM_PTE_WIRED_MASK) == ARM_PTE_WIRED)
+@@ -544,14 +534,19 @@
+ 	        }                                    \
+ 	} while(0)
+ 
++static void write_pte_fast(pt_entry_t *ptep, pt_entry_t pte);
++
+ static inline void
+ pte_set_wired(pmap_t pmap, pt_entry_t *ptep, boolean_t wired)
+ {
++	pt_entry_t pte = *ptep;
+ 	if (wired) {
+-		*ptep |= ARM_PTE_WIRED;
++		pte |= ARM_PTE_WIRED;
+ 	} else {
+-		*ptep &= ~ARM_PTE_WIRED;
++		pte &= ~ARM_PTE_WIRED;
+ 	}
++	write_pte_fast(ptep, pte);
++	__builtin_arm_dsb(DSB_ISHST);
+ 	/*
+ 	 * Do not track wired page count for kernel pagetable pages.  Kernel mappings are
+ 	 * not guaranteed to have PTDs in the first place, and kernel pagetable pages are
+@@ -601,6 +596,14 @@
+ #define FLUSH_PTE_STRONG()                                                             \
+ 	__builtin_arm_dsb(DSB_ISHST);
+ 
++#define PMAP_ASSERT_VM_PAGE_ALIGNMENT(fn, addr)                                          \
++	do {                                                                                   \
++		if (__improbable(TEST_PAGE_RATIO_4 &&                                                \
++		    (((uintptr_t)(addr) & (PAGE_SIZE - 1)) != 0))) {                               \
++			panic("%s: unaligned VM page address 0x%llx", fn, (uint64_t)(addr));          \
++		}                                                                                   \
++	} while (0)
++
+ /**
+  * Write enough page table entries to map a single VM page. On systems where the
+  * VM page size does not match the hardware page size, multiple page table
+@@ -4237,6 +4240,8 @@
+ 	bool            need_strong_sync = false;
+ 	bool            unlock = true;
+ 
++	PMAP_ASSERT_VM_PAGE_ALIGNMENT("pmap_remove_options_internal", start);
++	PMAP_ASSERT_VM_PAGE_ALIGNMENT("pmap_remove_options_internal", end);
+ 	if (__improbable(end < start)) {
+ 		panic("%s: invalid address range %p, %p", __func__, (void*)start, (void*)end);
+ 	}
+@@ -5189,6 +5194,9 @@
+ 	boolean_t        should_have_removed = FALSE;
+ 	bool             need_strong_sync = false;
+ 
++	PMAP_ASSERT_VM_PAGE_ALIGNMENT("pmap_protect_options_internal", start);
++	PMAP_ASSERT_VM_PAGE_ALIGNMENT("pmap_protect_options_internal", end);
++
+ 	/* Validate the pmap input before accessing its data. */
+ 	validate_pmap_mutable(pmap);
+ 
+@@ -5885,6 +5893,8 @@
+ 
+ 	__unused const pt_attr_t * const pt_attr = pmap_get_pt_attr(pmap);
+ 
++	PMAP_ASSERT_VM_PAGE_ALIGNMENT("pmap_enter_options_internal", v);
++
+ 	if ((v) & pt_attr_leaf_offmask(pt_attr)) {
+ 		panic("pmap_enter_options() pmap %p v 0x%llx",
+ 		    pmap, (uint64_t)v);
+@@ -5896,6 +5906,7 @@
+ 		    pmap, (uint64_t)v, (uint64_t)CPUWINDOWS_BASE, (uint64_t)CPUWINDOWS_TOP);
+ 	}
+ 
++	PMAP_ASSERT_VM_PAGE_ALIGNMENT("pmap_enter_options_internal", pa);
+ 	if ((pa) & pt_attr_leaf_offmask(pt_attr)) {
+ 		panic("pmap_enter_options() pmap %p pa 0x%llx",
+ 		    pmap, (uint64_t)pa);
+@@ -6338,17 +6349,7 @@
+ 	}
+ 
+ 	if (wiredcnt_updated && (OSAddAtomic16(-1, (volatile int16_t*)wiredcnt) <= 0)) {
+-#if defined(ARM64_BOARD_CONFIG_ANGELICA)
+-		/*
+-		 * ANGELICA: in our 4K-hw/16K-sw page port the wiredcnt accounting
+-		 * mismatches (the same page-table descriptor is incremented twice for
+-		 * one pte, or by multiple sub-entries); don't bring the machine down
+-		 * on the imbalance. Continue execution.
+-		 */
+-		(void)wiredcnt;
+-#else
+ 		panic("pmap_enter(): over-unwire of ptdp %p for pte %p", ptep_get_ptd(pte_p), pte_p);
+-#endif
+ 	}
+ 
+ 	pmap_unlock(pmap, lock_mode);
+@@ -6374,12 +6375,6 @@
+ {
+ 	kern_return_t kr = KERN_FAILURE;
+ 
+-	if (TEST_PAGE_RATIO_4 && ((uintptr_t)v & 0x3fff)) {
+-		printf("ANGELICA PMAP: enter v=%p pmap=%p type=%d caller=%p\n",
+-		    (void*)v, pmap, pmap->type, __builtin_return_address(0));
+-	}
+-
+-
+ 	PMAP_TRACE(2, PMAP_CODE(PMAP__ENTER) | DBG_FUNC_START,
+ 	    VM_KERNEL_ADDRHIDE(pmap), VM_KERNEL_ADDRHIDE(v), pa, prot);
+ 
+@@ -8492,8 +8487,7 @@
+ #endif /* __ARM_KERNEL_PROTECT__ */
+ 	pte |= ARM_PTE_ATTRINDX(CACHE_ATTRINDX_WRITEBACK);
+ 	pte |= ARM_PTE_SH(SH_OUTER_MEMORY);
+-	*ptep = pte;
+-	FLUSH_PTE();
++	write_pte_strong(ptep, pte);
+ 	PMAP_UPDATE_TLBS(kernel_pmap, LOWGLOBAL_ALIAS, LOWGLOBAL_ALIAS + PAGE_SIZE, false, true);
+ 
+ #if KASAN
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -1755,6 +1755,7 @@
+ 				}
+ 			}
+ 			__unreachable_ok_pop
++			__builtin_arm_dsb(DSB_ISHST);
+ 		}
+ 	}
+ 
