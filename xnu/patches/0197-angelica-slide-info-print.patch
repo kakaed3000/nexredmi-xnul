@@ -1,0 +1,14 @@
+--- a/osfmk/vm/vm_shared_region.c
++++ b/osfmk/vm/vm_shared_region.c
+@@ -3068,6 +3068,11 @@
+ 		    (unsigned long long)dump[0], (unsigned long long)dump[1],
+ 		    (unsigned long long)dump[2], (unsigned long long)dump[3], (unsigned long long)dump[4],
+ 		    (unsigned long long)dump[5], (unsigned long long)dump[6], (unsigned long long)dump[7]);
++		kprintf("ANGELICA SR: version=%u page_size=0x%x starts_off=0x%x starts_count=%u extras_off=0x%x extras_count=%u dmask=0x%llx vadd=0x%llx\n",
++		    s_info->version, s_info->page_size, s_info->page_starts_offset,
++		    s_info->page_starts_count, s_info->page_extras_offset,
++		    s_info->page_extras_count, (unsigned long long)delta_mask,
++		    (unsigned long long)value_add);
+ 		sdbg_printed = true;
+ 	}
+ #endif
