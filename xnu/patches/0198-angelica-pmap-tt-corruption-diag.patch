@@ -1,0 +1,15 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -3525,6 +3525,12 @@
+ 			vm_offset_t cur = (vm_offset_t)tt_free_cur;
+ 			const pt_attr_t * const pt_attr = pmap_get_pt_attr(pmap);
+ 			if (__improbable((cur & (pt_attr_page_size(pt_attr) - 1)) != 0)) {
++				printf("ANGELICA PT: corrupt tt_entry_free=%p pmap=%p pmap_pa=0x%llx tte=%p min=0x%llx max=0x%llx type=%d asid=%u refcnt=%d nested=%p ledger=%p next=%p prev=%p caller=%p\n",
++				    tt_free_cur, pmap, (uint64_t)kvtophys((vm_offset_t)pmap), pmap->tte,
++				    (uint64_t)pmap->min, (uint64_t)pmap->max, pmap->type, pmap->asid,
++				    pmap->refcnt, pmap->nested_pmap, pmap->ledger,
++				    pmap->pmaps.next, pmap->pmaps.prev,
++				    __builtin_return_address(0));
+ 				panic("%s: tt_entry_free=%p is not hardware-page aligned", __func__, tt_free_cur);
+ 			}
+ 			pv_entry_t **pvh = pai_to_pvh(pa_index(ml_static_vtop(cur)));
