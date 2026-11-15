@@ -1,0 +1,38 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -3590,6 +3590,22 @@
+ 
+ 
+ static void
++pmap_pt_page_zero_for_reuse(pmap_t pmap, tt_entry_t *ttp, unsigned int level)
++{
++	const pt_attr_t * const pt_attr = pmap_get_pt_attr(pmap);
++	unsigned int ptes = pt_attr_page_size(pt_attr) / sizeof(pt_entry_t);
++	pt_entry_t *pte_p = (pt_entry_t *)ttp;
++	for (unsigned int i = 0; i < ptes; i++) {
++		if (__improbable(pte_p[i] != ARM_PTE_EMPTY)) {
++			panic("%s: page %p has live PTE %llx at index %u pmap=%p level=%u",
++			    __func__, ttp, (uint64_t)pte_p[i], i, pmap, level);
++		}
++	}
++	memset(pte_p, 0, pt_attr_page_size(pt_attr));
++	__builtin_arm_dmb(DMB_ISHST);
++}
++
++static void
+ pmap_tt_deallocate(
+ 	pmap_t pmap,
+ 	tt_entry_t *ttp,
+@@ -3654,10 +3670,12 @@
+ 				tt_free_list_cur = tt_free_list_next;
+ 			}
+ 		} else {
++			pmap_pt_page_zero_for_reuse(pmap, ttp, level);
+ 			((tt_free_entry_t *)ttp)->next = (tt_free_entry_t *)pmap->tt_entry_free;
+ 			pmap->tt_entry_free = ttp;
+ 		}
+ 	} else {
++		pmap_pt_page_zero_for_reuse(pmap, ttp, level);
+ 		((tt_free_entry_t *)ttp)->next = (tt_free_entry_t *)pmap->tt_entry_free;
+ 		pmap->tt_entry_free = ttp;
+ 	}
